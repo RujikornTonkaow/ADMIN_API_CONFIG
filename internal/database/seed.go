@@ -59,10 +59,13 @@ func seedAdminUser(ctx context.Context, db *mongo.Database, username, password s
 	if err != nil {
 		return fmt.Errorf("hashing password: %w", err)
 	}
+	now := time.Now()
 	_, err = db.Collection("admin_users").InsertOne(ctx, model.AdminUser{
 		Username:  username,
 		Password:  string(hashed),
-		CreatedAt: time.Now(),
+		Role:      model.RoleAdmin,
+		CreatedAt: now,
+		UpdatedAt: now,
 	})
 	return err
 }

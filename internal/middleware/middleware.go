@@ -11,12 +11,18 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
+	"portfolio-admin-api/internal/model"
 	"portfolio-admin-api/pkg/response"
 )
 
 type contextKey string
 
-const RequestIDKey contextKey = "request_id"
+const (
+	RequestIDKey contextKey = "request_id"
+	UserIDKey    contextKey = "user_id"
+	UsernameKey  contextKey = "username"
+	RoleKey      contextKey = "role"
+)
 
 func Chain(h http.Handler, mws ...func(http.Handler) http.Handler) http.Handler {
 	for i := len(mws) - 1; i >= 0; i-- {
@@ -142,7 +148,56 @@ func Auth(jwtSecret string) func(http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 
-			next(w, r)
+			claims, ok := token.Claims.(jwt.MapClaims)
+			if !ok {
+				response.Error(w, http.StatusUnauthorized, "invalid token claims")
+				return
+			}
+
+			userID, _ := claims["sub"].(string)
+			username, _ := claims["usr"].(string)
+			role, _ := claims["role"].(string)
+
+			ctx := r.Context()
+			ctx = context.WithValue(ctx, UserIDKey, userID)
+			ctx = context.WithValue(ctx, UsernameKey, username)
+			ctx = context.WithValue(ctx, RoleKey, role)
+
+			next(w, r.WithContext(ctx))
 		}
 	}
+}
+
+func RequireRole(minRole string, authMw func(http.HandlerFunc) http.HandlerFunc) func(http.HandlerFunc) http.HandlerFunc {
+	return func(next http.HandlerFunc) http.HandlerFunc {
+		return authMw(func(w http.ResponseWriter, r *http.Request) {
+			userRole := GetRole(r.Context())
+			if model.RoleLevel(userRole) < model.RoleLevel(minRole) {
+				response.Error(w, http.StatusForbidden, "insufficient permissions")
+				return
+			}
+			next(w, r)
+		})
+	}
+}
+
+func GetUserID(ctx context.Context) string {
+	if id, ok := ctx.Value(UserIDKey).(string); ok {
+		return id
+	}
+	return ""
+}
+
+func GetUsername(ctx context.Context) string {
+	if u, ok := ctx.Value(UsernameKey).(string); ok {
+		return u
+	}
+	return ""
+}
+
+func GetRole(ctx context.Context) string {
+	if r, ok := ctx.Value(RoleKey).(string); ok {
+		return r
+	}
+	return ""
 }

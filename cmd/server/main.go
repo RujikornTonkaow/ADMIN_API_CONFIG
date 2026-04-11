@@ -35,6 +35,13 @@ func main() {
 	}
 	defer disconnect()
 
+	adminUserRepo := repository.NewAdminUserRepository(db)
+
+	if err := adminUserRepo.EnsureIndexes(ctx); err != nil {
+		log.Error("failed to ensure indexes", "error", err)
+		os.Exit(1)
+	}
+
 	if err := database.SeedIfEmpty(ctx, db, cfg.AdminUsername, cfg.AdminPassword, log); err != nil {
 		log.Error("failed to seed database", "error", err)
 		os.Exit(1)
@@ -48,7 +55,6 @@ func main() {
 	experienceRepo := repository.NewExperienceRepository(db)
 	socialLinkRepo := repository.NewSocialLinkRepository(db)
 	contactRepo := repository.NewContactRepository(db)
-	adminUserRepo := repository.NewAdminUserRepository(db)
 
 	handler := router.New(&router.Config{
 		JWTSecret:        cfg.JWTSecret,

@@ -6,6 +6,7 @@ import (
 
 	"portfolio-admin-api/internal/handler"
 	"portfolio-admin-api/internal/middleware"
+	"portfolio-admin-api/internal/model"
 	"portfolio-admin-api/internal/repository"
 )
 
@@ -31,6 +32,9 @@ func New(cfg *Config) http.Handler {
 	mux := http.NewServeMux()
 
 	authMw := middleware.Auth(cfg.JWTSecret)
+	requireAdmin := middleware.RequireRole(model.RoleAdmin, authMw)
+	requireUser := middleware.RequireRole(model.RoleUserAccount, authMw)
+	requireVisitor := middleware.RequireRole(model.RoleVisitor, authMw)
 
 	authH := handler.NewAuthHandler(cfg.AdminUserRepo, cfg.JWTSecret, cfg.Log)
 	publicH := handler.NewPublicHandler(
@@ -47,6 +51,7 @@ func New(cfg *Config) http.Handler {
 	socialLinkH := handler.NewSocialLinkHandler(cfg.SocialLinkRepo, cfg.Log)
 	contactH := handler.NewContactHandler(cfg.ContactRepo, cfg.Log)
 	uploadH := handler.NewUploadHandler(cfg.UploadDir, cfg.MaxUploadMB, cfg.Log)
+	userH := handler.NewUserHandler(cfg.AdminUserRepo, cfg.Log)
 
 	// --- Public API (no auth) ---
 	mux.HandleFunc("GET /api/v1/portfolio", publicH.GetPortfolio)
@@ -54,53 +59,62 @@ func New(cfg *Config) http.Handler {
 
 	// --- Auth ---
 	mux.HandleFunc("POST /api/v1/admin/auth/login", authH.Login)
+	mux.HandleFunc("GET /api/v1/admin/auth/me", requireVisitor(authH.GetMe))
 
-	// --- Admin: Site Settings (singleton) ---
-	mux.HandleFunc("GET /api/v1/admin/site-settings", authMw(siteSettingsH.Get))
-	mux.HandleFunc("PUT /api/v1/admin/site-settings", authMw(siteSettingsH.Update))
+	// --- Admin: User Management (admin only) ---
+	mux.HandleFunc("GET /api/v1/admin/users", requireAdmin(userH.List))
+	mux.HandleFunc("POST /api/v1/admin/users", requireAdmin(userH.Create))
+	mux.HandleFunc("GET /api/v1/admin/users/{id}", requireAdmin(userH.GetByID))
+	mux.HandleFunc("PUT /api/v1/admin/users/{id}", requireAdmin(userH.Update))
+	mux.HandleFunc("DELETE /api/v1/admin/users/{id}", requireAdmin(userH.Delete))
+	mux.HandleFunc("PUT /api/v1/admin/users/{id}/password", requireAdmin(userH.ChangePassword))
 
-	// --- Admin: Hero (singleton) ---
-	mux.HandleFunc("GET /api/v1/admin/hero", authMw(heroH.Get))
-	mux.HandleFunc("PUT /api/v1/admin/hero", authMw(heroH.Update))
+	// --- Admin: Site Settings (user_account+) ---
+	mux.HandleFunc("GET /api/v1/admin/site-settings", requireUser(siteSettingsH.Get))
+	mux.HandleFunc("PUT /api/v1/admin/site-settings", requireUser(siteSettingsH.Update))
 
-	// --- Admin: About (singleton) ---
-	mux.HandleFunc("GET /api/v1/admin/about", authMw(aboutH.Get))
-	mux.HandleFunc("PUT /api/v1/admin/about", authMw(aboutH.Update))
+	// --- Admin: Hero (user_account+) ---
+	mux.HandleFunc("GET /api/v1/admin/hero", requireUser(heroH.Get))
+	mux.HandleFunc("PUT /api/v1/admin/hero", requireUser(heroH.Update))
 
-	// --- Admin: Skills (CRUD) ---
-	mux.HandleFunc("GET /api/v1/admin/skills", authMw(skillH.List))
-	mux.HandleFunc("POST /api/v1/admin/skills", authMw(skillH.Create))
-	mux.HandleFunc("PUT /api/v1/admin/skills/{id}", authMw(skillH.Update))
-	mux.HandleFunc("DELETE /api/v1/admin/skills/{id}", authMw(skillH.Delete))
+	// --- Admin: About (user_account+) ---
+	mux.HandleFunc("GET /api/v1/admin/about", requireUser(aboutH.Get))
+	mux.HandleFunc("PUT /api/v1/admin/about", requireUser(aboutH.Update))
 
-	// --- Admin: Projects (CRUD + reorder) ---
-	mux.HandleFunc("GET /api/v1/admin/projects", authMw(projectH.List))
-	mux.HandleFunc("POST /api/v1/admin/projects", authMw(projectH.Create))
-	mux.HandleFunc("PUT /api/v1/admin/projects/reorder", authMw(projectH.Reorder))
-	mux.HandleFunc("PUT /api/v1/admin/projects/{id}", authMw(projectH.Update))
-	mux.HandleFunc("DELETE /api/v1/admin/projects/{id}", authMw(projectH.Delete))
+	// --- Admin: Skills (user_account+) ---
+	mux.HandleFunc("GET /api/v1/admin/skills", requireUser(skillH.List))
+	mux.HandleFunc("POST /api/v1/admin/skills", requireUser(skillH.Create))
+	mux.HandleFunc("PUT /api/v1/admin/skills/{id}", requireUser(skillH.Update))
+	mux.HandleFunc("DELETE /api/v1/admin/skills/{id}", requireUser(skillH.Delete))
 
-	// --- Admin: Experience (CRUD + reorder) ---
-	mux.HandleFunc("GET /api/v1/admin/experiences", authMw(experienceH.List))
-	mux.HandleFunc("POST /api/v1/admin/experiences", authMw(experienceH.Create))
-	mux.HandleFunc("PUT /api/v1/admin/experiences/reorder", authMw(experienceH.Reorder))
-	mux.HandleFunc("PUT /api/v1/admin/experiences/{id}", authMw(experienceH.Update))
-	mux.HandleFunc("DELETE /api/v1/admin/experiences/{id}", authMw(experienceH.Delete))
+	// --- Admin: Projects (user_account+) ---
+	mux.HandleFunc("GET /api/v1/admin/projects", requireUser(projectH.List))
+	mux.HandleFunc("POST /api/v1/admin/projects", requireUser(projectH.Create))
+	mux.HandleFunc("PUT /api/v1/admin/projects/reorder", requireUser(projectH.Reorder))
+	mux.HandleFunc("PUT /api/v1/admin/projects/{id}", requireUser(projectH.Update))
+	mux.HandleFunc("DELETE /api/v1/admin/projects/{id}", requireUser(projectH.Delete))
 
-	// --- Admin: Social Links (CRUD + reorder) ---
-	mux.HandleFunc("GET /api/v1/admin/social-links", authMw(socialLinkH.List))
-	mux.HandleFunc("POST /api/v1/admin/social-links", authMw(socialLinkH.Create))
-	mux.HandleFunc("PUT /api/v1/admin/social-links/reorder", authMw(socialLinkH.Reorder))
-	mux.HandleFunc("PUT /api/v1/admin/social-links/{id}", authMw(socialLinkH.Update))
-	mux.HandleFunc("DELETE /api/v1/admin/social-links/{id}", authMw(socialLinkH.Delete))
+	// --- Admin: Experience (user_account+) ---
+	mux.HandleFunc("GET /api/v1/admin/experiences", requireUser(experienceH.List))
+	mux.HandleFunc("POST /api/v1/admin/experiences", requireUser(experienceH.Create))
+	mux.HandleFunc("PUT /api/v1/admin/experiences/reorder", requireUser(experienceH.Reorder))
+	mux.HandleFunc("PUT /api/v1/admin/experiences/{id}", requireUser(experienceH.Update))
+	mux.HandleFunc("DELETE /api/v1/admin/experiences/{id}", requireUser(experienceH.Delete))
 
-	// --- Admin: Contact Messages ---
-	mux.HandleFunc("GET /api/v1/admin/contacts", authMw(contactH.List))
-	mux.HandleFunc("GET /api/v1/admin/contacts/{id}", authMw(contactH.GetByID))
-	mux.HandleFunc("DELETE /api/v1/admin/contacts/{id}", authMw(contactH.Delete))
+	// --- Admin: Social Links (user_account+) ---
+	mux.HandleFunc("GET /api/v1/admin/social-links", requireUser(socialLinkH.List))
+	mux.HandleFunc("POST /api/v1/admin/social-links", requireUser(socialLinkH.Create))
+	mux.HandleFunc("PUT /api/v1/admin/social-links/reorder", requireUser(socialLinkH.Reorder))
+	mux.HandleFunc("PUT /api/v1/admin/social-links/{id}", requireUser(socialLinkH.Update))
+	mux.HandleFunc("DELETE /api/v1/admin/social-links/{id}", requireUser(socialLinkH.Delete))
 
-	// --- Admin: File Upload ---
-	mux.HandleFunc("POST /api/v1/admin/upload", authMw(uploadH.Upload))
+	// --- Admin: Contact Messages (read: visitor+, delete: user_account+) ---
+	mux.HandleFunc("GET /api/v1/admin/contacts", requireVisitor(contactH.List))
+	mux.HandleFunc("GET /api/v1/admin/contacts/{id}", requireVisitor(contactH.GetByID))
+	mux.HandleFunc("DELETE /api/v1/admin/contacts/{id}", requireUser(contactH.Delete))
+
+	// --- Admin: File Upload (user_account+) ---
+	mux.HandleFunc("POST /api/v1/admin/upload", requireUser(uploadH.Upload))
 
 	// --- Static files: uploaded images ---
 	fs := http.FileServer(http.Dir(cfg.UploadDir))

@@ -102,11 +102,29 @@ type ContactMessage struct {
 	CreatedAt time.Time          `bson:"created_at" json:"created_at"`
 }
 
+const (
+	RoleAdmin       = "admin"
+	RoleUserAccount = "user_account"
+	RoleVisitor     = "visitor"
+)
+
+var ValidRoles = map[string]int{
+	RoleVisitor:     1,
+	RoleUserAccount: 2,
+	RoleAdmin:       3,
+}
+
+func RoleLevel(role string) int {
+	return ValidRoles[role]
+}
+
 type AdminUser struct {
 	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	Username  string             `bson:"username" json:"username"`
 	Password  string             `bson:"password" json:"-"`
+	Role      string             `bson:"role" json:"role"`
 	CreatedAt time.Time          `bson:"created_at" json:"created_at"`
+	UpdatedAt time.Time          `bson:"updated_at" json:"updated_at"`
 }
 
 // --- API Request/Response Types ---
@@ -117,7 +135,29 @@ type LoginRequest struct {
 }
 
 type LoginResponse struct {
-	Token string `json:"token"`
+	Token string    `json:"token"`
+	User  LoginUser `json:"user"`
+}
+
+type LoginUser struct {
+	ID       string `json:"id"`
+	Username string `json:"username"`
+	Role     string `json:"role"`
+}
+
+type CreateUserRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Role     string `json:"role"`
+}
+
+type UpdateUserRequest struct {
+	Username string `json:"username"`
+	Role     string `json:"role"`
+}
+
+type ChangePasswordRequest struct {
+	NewPassword string `json:"new_password"`
 }
 
 type ReorderRequest struct {

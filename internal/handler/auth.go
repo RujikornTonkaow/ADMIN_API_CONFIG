@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"golang.org/x/crypto/bcrypt"
 
@@ -58,10 +59,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub": user.ID.Hex(),
-		"usr": user.Username,
-		"exp": time.Now().Add(24 * time.Hour).Unix(),
-		"iat": time.Now().Unix(),
+		"sub":  user.ID.Hex(),
+		"usr":  user.Username,
+		"role": user.Role,
+		"exp":  time.Now().Add(24 * time.Hour).Unix(),
+		"iat":  time.Now().Unix(),
 	})
 
 	tokenStr, err := token.SignedString([]byte(h.jwtSecret))
@@ -74,5 +76,37 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.JSON(w, http.StatusOK, model.LoginResponse{Token: tokenStr})
+	response.JSON(w, http.StatusOK, model.LoginResponse{
+		Token: tokenStr,
+		User: model.LoginUser{
+			ID:       user.ID.Hex(),
+			Username: user.Username,
+			Role:     user.Role,
+		},
+	})
+}
+
+func (h *AuthHandler) GetMe(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r.Context())
+	oid, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		response.Error(w, http.StatusUnauthorized, "invalid user identity")
+		return
+	}
+
+	user, err := h.repo.FindByID(r.Context(), oid)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			response.Error(w, http.StatusNotFound, "user not found")
+			return
+		}
+		h.log.Error("getting current user",
+			"error", err,
+			"request_id", middleware.GetRequestID(r.Context()),
+		)
+		response.Error(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	response.JSON(w, http.StatusOK, user)
 }
