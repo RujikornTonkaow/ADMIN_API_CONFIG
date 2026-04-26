@@ -37,6 +37,8 @@ portfolio-admin-api/
 │   │   ├── hero.go              # จัดการ Hero section
 │   │   ├── project.go           # จัดการ Projects (CRUD + reorder)
 │   │   ├── public.go            # API สาธารณะ (portfolio + contact form)
+│   │   ├── site.go              # จัดการ Sites (CRUD)
+│   │   ├── site_member.go       # จัดการ Site Members
 │   │   ├── site_settings.go     # จัดการ Site Settings
 │   │   ├── skill.go             # จัดการ Skills (CRUD)
 │   │   ├── social_link.go       # จัดการ Social Links (CRUD + reorder)
@@ -56,6 +58,8 @@ portfolio-admin-api/
 │   │   ├── experience.go        # MongoDB operations สำหรับ experiences
 │   │   ├── hero.go              # MongoDB operations สำหรับ hero
 │   │   ├── project.go           # MongoDB operations สำหรับ projects
+│   │   ├── site.go              # MongoDB operations สำหรับ sites
+│   │   ├── site_member.go       # MongoDB operations สำหรับ site_members
 │   │   ├── site_settings.go     # MongoDB operations สำหรับ site_settings
 │   │   ├── skill.go             # MongoDB operations สำหรับ skills
 │   │   └── social_link.go       # MongoDB operations สำหรับ social_links
@@ -100,7 +104,7 @@ portfolio-admin-api/
 2. โหลด config จาก environment variables
 3. สร้าง upload directory
 4. เชื่อมต่อ MongoDB
-5. สร้าง indexes บน `admin_users` collection
+5. สร้าง indexes บน collections `admin_users`, `sites`, `site_members`
 6. Seed ข้อมูลเริ่มต้น (ถ้า database ว่าง)
 7. สร้าง repositories ทั้งหมด
 8. สร้าง router พร้อม middleware
@@ -166,18 +170,20 @@ portfolio-admin-api/
 
 | ไฟล์ | Endpoints | คำอธิบาย |
 |------|-----------|---------|
-| `public.go` | `GET /portfolio`, `POST /contact` | API สาธารณะ: ดึงข้อมูล portfolio ทั้งหมด + ส่ง contact message |
+| `public.go` | `GET /public/sites/{siteId}/portfolio`, `POST /public/sites/{siteId}/portfolio/contacts`, `GET /public/sites/by-domain` | API สาธารณะ: ดึงข้อมูล portfolio ตาม site + ส่ง contact message + ค้นหา site จาก domain |
 | `auth.go` | `POST /login`, `GET /me` | Login ด้วย username/password → JWT token, ดูข้อมูล user ปัจจุบัน |
 | `user.go` | CRUD `/admin/users` | จัดการ admin users (สร้าง, ดู, แก้ไข, ลบ, เปลี่ยนรหัสผ่าน) — admin only |
-| `site_settings.go` | GET/PUT `/admin/site-settings` | ดู/แก้ไข site settings (site title, theme, meta) |
-| `hero.go` | GET/PUT `/admin/hero` | ดู/แก้ไข hero section (greeting, name, CTA) |
-| `about.go` | GET/PUT `/admin/about` | ดู/แก้ไข about section (bio, tags, stats) |
-| `skill.go` | CRUD `/admin/skills` | จัดการ skills (สร้าง, ดู, แก้ไข, ลบ) |
-| `project.go` | CRUD+Reorder `/admin/projects` | จัดการ projects (สร้าง, ดู, แก้ไข, ลบ, เรียงลำดับ) |
-| `experience.go` | CRUD+Reorder `/admin/experiences` | จัดการ experiences (สร้าง, ดู, แก้ไข, ลบ, เรียงลำดับ) |
-| `social_link.go` | CRUD+Reorder `/admin/social-links` | จัดการ social links (สร้าง, ดู, แก้ไข, ลบ, เรียงลำดับ) |
-| `contact.go` | List/Get/Delete `/admin/contacts` | ดูรายการ/รายละเอียด/ลบ contact messages |
-| `upload.go` | `POST /admin/upload` | อัปโหลดรูปภาพ: validate type/size → UUID filename → save to disk |
+| `site.go` | CRUD `/admin/sites` | จัดการ sites (สร้าง, ดู, แก้ไข, ลบ) |
+| `site_member.go` | CRUD `/admin/sites/{siteId}/members` | จัดการสมาชิกของ site (เพิ่ม, ดู, แก้ role, ลบ) |
+| `site_settings.go` | GET/PUT `/admin/sites/{siteId}/portfolio/site-settings` | ดู/แก้ไข site settings (site title, theme, meta) |
+| `hero.go` | GET/PUT `/admin/sites/{siteId}/portfolio/hero` | ดู/แก้ไข hero section (greeting, name, CTA) |
+| `about.go` | GET/PUT `/admin/sites/{siteId}/portfolio/about` | ดู/แก้ไข about section (bio, tags, stats) |
+| `skill.go` | CRUD `/admin/sites/{siteId}/portfolio/skills` | จัดการ skills (สร้าง, ดู, แก้ไข, ลบ) |
+| `project.go` | CRUD+Reorder `/admin/sites/{siteId}/portfolio/projects` | จัดการ projects (สร้าง, ดู, แก้ไข, ลบ, เรียงลำดับ) |
+| `experience.go` | CRUD+Reorder `/admin/sites/{siteId}/portfolio/experiences` | จัดการ experiences (สร้าง, ดู, แก้ไข, ลบ, เรียงลำดับ) |
+| `social_link.go` | CRUD+Reorder `/admin/sites/{siteId}/portfolio/social-links` | จัดการ social links (สร้าง, ดู, แก้ไข, ลบ, เรียงลำดับ) |
+| `contact.go` | List/Get/Delete `/admin/sites/{siteId}/portfolio/contacts` | ดูรายการ/รายละเอียด/ลบ contact messages |
+| `upload.go` | `POST /admin/sites/{siteId}/portfolio/upload` | อัปโหลดรูปภาพ: validate type/size → UUID filename → save to disk |
 
 ---
 
@@ -194,12 +200,14 @@ portfolio-admin-api/
 | `CORS()` | ตรวจสอบ Origin, set Access-Control headers, handle preflight OPTIONS |
 | `Auth()` | ตรวจสอบ JWT token จาก Authorization header, inject user info ลง context |
 | `RequireRole()` | ตรวจสอบ role level ของ user ว่าเพียงพอสำหรับ endpoint นั้น |
+| `RequireSiteMember()` | ตรวจสอบสิทธิ์ระดับ site (owner >= editor >= viewer) + inject `siteID` ลง context |
 
 **Helper functions:**
 - `GetRequestID(ctx)` — ดึง request ID จาก context
 - `GetUserID(ctx)` — ดึง user ID จาก context
 - `GetUsername(ctx)` — ดึง username จาก context
 - `GetRole(ctx)` — ดึง role จาก context
+- `GetSiteID(ctx)` — ดึง site ID จาก context
 
 ---
 
@@ -207,12 +215,16 @@ portfolio-admin-api/
 
 **หน้าที่:** กำหนดโครงสร้างข้อมูลทั้งหมดของระบบ
 
-**Singleton Models (เอกสารเดียวต่อ collection):**
+**Multi-site Models:**
+- `Site` — ข้อมูล site (เช่น slug, domain, metadata)
+- `SiteMember` — ความสัมพันธ์ user กับ site และ role ระดับ site
+
+**Singleton Models (เอกสารเดียวต่อ collection ต่อ site):**
 - `SiteSettings` — ชื่อไซต์, page title, meta description, theme, profile image
 - `Hero` — greeting, ชื่อ, subtitle, CTA buttons
 - `About` — title, bio paragraphs, personality tags, stats
 
-**Collection Models (หลายเอกสาร):**
+**Collection Models (หลายเอกสารต่อ site):**
 - `Skill` — name, icon, category, sort_order
 - `Project` — title, description, tags, image, URLs, sort_order
 - `Experience` — role, company, period, description, highlights, sort_order
@@ -220,10 +232,16 @@ portfolio-admin-api/
 - `ContactMessage` — name, email, subject, message, is_read
 - `AdminUser` — username, password (hashed), role
 
+**หมายเหตุ:** โมเดล portfolio ที่มีอยู่เดิม (`SiteSettings`, `Hero`, `About`, `Skill`, `Project`, `Experience`, `SocialLink`, `ContactMessage`) มีฟิลด์ `SiteID` เพื่อผูกข้อมูลกับ site
+
+**Site role constants:**
+- `SiteRoleOwner`, `SiteRoleEditor`, `SiteRoleViewer` (legacy storage compatibility; UI ใช้ site access list)
+
 **RBAC Constants:**
+- `RoleSuperAdmin = "super_admin"` (Level 4)
 - `RoleAdmin = "admin"` (Level 3)
-- `RoleUserAccount = "user_account"` (Level 2)
-- `RoleVisitor = "visitor"` (Level 1)
+- `RoleEditor = "editor"` (Level 2)
+- `RoleViewer = "viewer"` (Level 1)
 
 **API DTOs (Request/Response):**
 - `LoginRequest`, `LoginResponse`, `LoginUser`
@@ -239,15 +257,19 @@ portfolio-admin-api/
 
 | ไฟล์ | Collection | Operations |
 |------|-----------|-----------|
-| `about.go` | `about` | Get (FindOne), Upsert (update หรือ insert) |
+| `about.go` | `about` | Get (FindOne), Upsert (update หรือ insert) — รับ `siteID` |
 | `admin_user.go` | `admin_users` | EnsureIndexes, Create, FindByUsername, FindByID, List, Update, UpdatePassword, Delete, CountByRole |
-| `contact.go` | `contact_messages` | Create, List, GetByID, MarkAsRead, Delete, CountUnread |
-| `experience.go` | `experiences` | Create, List, FindByID, Update, Delete, Reorder |
-| `hero.go` | `hero` | Get (FindOne), Upsert (update หรือ insert) |
-| `project.go` | `projects` | Create, List, FindByID, Update, Delete, Reorder |
-| `site_settings.go` | `site_settings` | Get (FindOne), Upsert (update หรือ insert) |
-| `skill.go` | `skills` | Create, List, FindByID, Update, Delete |
-| `social_link.go` | `social_links` | Create, List, FindByID, Update, Delete, Reorder |
+| `contact.go` | `contact_messages` | Create, List, GetByID, MarkAsRead, Delete, CountUnread — รับ `siteID` |
+| `experience.go` | `experiences` | Create, List, FindByID, Update, Delete, Reorder — รับ `siteID` |
+| `hero.go` | `hero` | Get (FindOne), Upsert (update หรือ insert) — รับ `siteID` |
+| `project.go` | `projects` | Create, List, FindByID, Update, Delete, Reorder — รับ `siteID` |
+| `site.go` | `sites` | EnsureIndexes, Create, FindByID, FindBySlug, FindByDomain, ListByIDs, Update, Delete |
+| `site_member.go` | `site_members` | EnsureIndexes, Create, FindByID, FindBySiteAndUser, ListBySite, ListByUser, UpdateRole, Delete, DeleteBySite, CountOwners |
+| `site_settings.go` | `site_settings` | Get (FindOne), Upsert (update หรือ insert) — รับ `siteID` |
+| `skill.go` | `skills` | Create, List, FindByID, Update, Delete — รับ `siteID` |
+| `social_link.go` | `social_links` | Create, List, FindByID, Update, Delete, Reorder — รับ `siteID` |
+
+**หมายเหตุ:** repository ของ portfolio ที่มีอยู่เดิมรับพารามิเตอร์ `siteID` เพื่อกรอง/เขียนข้อมูลตาม site
 
 **หมายเหตุ:** Singleton collections (about, hero, site_settings) ใช้ pattern แยก:
 - `Get` = FindOne จาก collection (ถ้าไม่มี document จะ error)
@@ -263,10 +285,11 @@ portfolio-admin-api/
 **สิ่งที่ทำ:**
 1. สร้าง auth middleware (JWT validation)
 2. สร้าง role-based middleware: `requireAdmin`, `requireUser`, `requireVisitor`
-3. สร้าง handler instances ทั้งหมดพร้อม inject dependencies
-4. ลงทะเบียน routes ตาม HTTP method + path
-5. Mount static file server สำหรับ `/uploads/`
-6. ครอบ global middleware stack: Recovery → CORS → Logging → RequestID
+3. สร้าง site-scoped middleware: `siteOwner`, `siteEditor`, `siteViewer` (ใช้ร่วมกับ `RequireSiteMember()` ตามระดับสิทธิ์)
+4. สร้าง handler instances ทั้งหมดพร้อม inject dependencies
+5. ลงทะเบียน routes ตาม HTTP method + path — public และ admin ที่เกี่ยวกับ portfolio เป็นแบบ site-scoped (`/public/sites/...`, `/admin/sites/{siteId}/portfolio/...`)
+6. Mount static file server สำหรับ `/uploads/`
+7. ครอบ global middleware stack: Recovery → CORS → Logging → RequestID
 
 ---
 

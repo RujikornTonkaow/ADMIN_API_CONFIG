@@ -4,7 +4,25 @@
 
 ---
 
+## Implementation Decision — ใช้ routes ใหม่เท่านั้น
+
+ระบบนี้เลือก cutover เป็น multi-site เต็มรูปแบบ:
+
+- ใช้ Portfolio admin routes แบบ `/api/v1/admin/sites/{siteId}/portfolio/...` เท่านั้น
+- ไม่เก็บ legacy routes เดิม เช่น `/api/v1/admin/projects`, `/api/v1/admin/skills`, `/api/v1/admin/hero`, `/api/v1/admin/upload`
+- ข้อมูล portfolio เดิมไม่ต้อง migrate ให้ตั้ง `RESET_DATABASE_ON_START=true` เพื่อ drop database แล้ว seed ใหม่ตอนรัน server
+- ทุก handler/repository ของ portfolio ต้องรับ `siteId` จาก path/middleware และ query ด้วย `site_id` เสมอ
+
+เอกสารที่ต้องอ่านคู่กันจากฝั่ง Admin Dashboard:
+
+- `Website_Config/GUIDE/07-MULTI-SITE-ARCHITECTURE.md`
+- `Website_Config/GUIDE/08-CORS-AND-LOCAL-DEV.md`
+
+---
+
 ## สถาปัตยกรรมภาพรวม (Architecture Overview)
+
+ระบบเป็นแบบ **multi-site**: เก็บ metadata ของแต่ละเว็บใน `sites` สมาชิกและบทบาทต่อไซต์ใน `site_members` และข้อมูล portfolio (hero, projects, …) ผูกกับ `site_id` เพื่อแยกขอบเขตต่อไซต์
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -14,8 +32,9 @@
 │  │  (Public visitor)    │       │     (Authenticated users)    │   │
 │  └──────────┬───────────┘       └──────────────┬───────────────┘   │
 └─────────────┼──────────────────────────────────┼───────────────────┘
-              │ GET /api/v1/portfolio             │ JWT Bearer Token
-              │ POST /api/v1/contact              │ CRUD operations
+              │ GET /api/v1/public/sites/{siteId}/portfolio          │ JWT Bearer Token
+              │ GET /api/v1/public/sites/by-domain?host=           │ CRUD ต่อ siteId
+              │ POST .../portfolio/contacts                        │
               ▼                                   ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     Portfolio Admin API (Go)                        │
@@ -30,20 +49,22 @@
 │  └──────┬──────────────────────┬─────────────────────┬───────┘     │
 │         │                      │                     │              │
 │  ┌──────▼──────┐  ┌───────────▼──────────┐  ┌───────▼──────────┐  │
-│  │  Handlers   │  │  Auth Middleware      │  │  RBAC Middleware  │  │
-│  │  (Business  │  │  (JWT Validation)     │  │  (Role Check)    │  │
-│  │   Logic)    │  │                       │  │                  │  │
+│  │  Handlers   │  │  Auth Middleware      │  │  RBAC + Require  │  │
+│  │  (Business  │  │  (JWT Validation)     │  │  SiteMember      │  │
+│  │   Logic)    │  │                       │  │  (site-scoped)   │  │
 │  └──────┬──────┘  └───────────────────────┘  └──────────────────┘  │
 │         │                                                           │
 │  ┌──────▼──────────────────────────────────────────────────────┐   │
 │  │                   Repository Layer                          │   │
-│  │   (Data Access — MongoDB CRUD operations)                   │   │
+│  │   (Data Access — MongoDB — sites / site_members + ข้อมูลที่มี site_id) │
 │  └──────────────────────────┬──────────────────────────────────┘   │
 └─────────────────────────────┼──────────────────────────────────────┘
                               │
                     ┌─────────▼─────────┐
                     │     MongoDB 7     │
                     │  (portfolio_admin) │
+                    │  sites, site_members, │
+                    │  collections อื่น ๆ (site-scoped) │
                     └───────────────────┘
 ```
 
@@ -69,26 +90,33 @@
 │     └─→ Timeout 10 วินาที                                        │
 │     └─→ Ping เพื่อยืนยันการเชื่อมต่อ                              │
 ├──────────────────────────────────────────────────────────────────┤
-│  5. Ensure database indexes                                      │
-│     └─→ สร้าง unique index บน admin_users.username               │
+│  5. Optional database reset                                      │
+│     └─→ ถ้า RESET_DATABASE_ON_START=true จะ drop database ก่อน seed │
 ├──────────────────────────────────────────────────────────────────┤
-│  6. Seed initial data (ถ้า admin_users collection ว่าง)           │
+│  6. Ensure database indexes                                      │
+│     └─→ admin_users: unique index บน username                    │
+│     └─→ sites: unique index บน slug                              │
+│     └─→ site_members: unique compound index บน site_id + user_id │
+├──────────────────────────────────────────────────────────────────┤
+│  7. Seed initial data (ถ้า admin_users collection ว่าง)           │
 │     └─→ สร้าง admin user ด้วย bcrypt hashed password             │
-│     └─→ สร้าง default: site_settings, hero, about,               │
-│         skills, projects, experiences, social_links               │
+│     └─→ สร้าง default site                                      │
+│     └─→ สร้าง site_member (admin user เป็น owner ของไซต์นั้น)    │
+│     └─→ สร้างข้อมูล portfolio (site_settings, hero, about,       │
+│         skills, projects, experiences, social_links) พร้อม site_id │
 ├──────────────────────────────────────────────────────────────────┤
-│  7. Initialize all repositories                                  │
+│  8. Initialize all repositories                                  │
 │     └─→ สร้าง repository instance สำหรับแต่ละ collection          │
 ├──────────────────────────────────────────────────────────────────┤
-│  8. Build router with middleware stack                            │
+│  9. Build router with middleware stack                            │
 │     └─→ ลงทะเบียน routes ทั้งหมดพร้อม middleware                  │
 ├──────────────────────────────────────────────────────────────────┤
-│  9. Start HTTP server                                            │
+│  10. Start HTTP server                                           │
 │     └─→ ReadTimeout: 15s, ReadHeaderTimeout: 5s                 │
 │     └─→ WriteTimeout: 15s, IdleTimeout: 60s                     │
 │     └─→ MaxHeaderBytes: 1MB                                     │
 ├──────────────────────────────────────────────────────────────────┤
-│  10. Wait for shutdown signal (SIGINT / SIGTERM)                 │
+│  11. Wait for shutdown signal (SIGINT / SIGTERM)                 │
 │      └─→ Graceful shutdown with 10s timeout                      │
 │      └─→ ปิด DB connection อย่างสมบูรณ์ด้วย defer disconnect()    │
 └──────────────────────────────────────────────────────────────────┘
@@ -167,7 +195,7 @@ Client                          API Server                       MongoDB
 ```
 Client                          API Server
   │                                │
-  │  GET /api/v1/admin/skills      │
+  │  GET /api/v1/admin/sites/{siteId}/portfolio/skills │
   │  Authorization: Bearer <JWT>   │
   │ ──────────────────────────────►│
   │                                │
@@ -200,39 +228,56 @@ Client                          API Server
 ┌────────────────────────────────────────────────────────┐
 │  Role Level    │  Role Name     │  สิทธิ์ที่ทำได้      │
 ├────────────────┼────────────────┼──────────────────────┤
-│  Level 3       │  admin         │  ทุกอย่าง + จัดการ    │
-│  (สูงสุด)      │                │  User CRUD           │
+│  Level 4       │  super_admin   │  ทุกอย่าง ทุก site    │
+│  (สูงสุด)      │                │  และสร้าง super admin │
 ├────────────────┼────────────────┼──────────────────────┤
-│  Level 2       │  user_account  │  CRUD content ทั้งหมด │
-│                │                │  Upload, ลบ Contact   │
+│  Level 3       │  admin         │  User/content เฉพาะ   │
+│                │                │  site ที่ได้รับสิทธิ์ │
 ├────────────────┼────────────────┼──────────────────────┤
-│  Level 1       │  visitor       │  ดู content + อ่าน    │
+│  Level 2       │  editor        │  แก้ content เฉพาะ    │
+│                │                │  site ที่ได้รับสิทธิ์ │
+├────────────────┼────────────────┼──────────────────────┤
+│  Level 1       │  viewer        │  ดู Messages/Contacts │
 │  (ต่ำสุด)      │                │  Contact messages     │
 └────────────────┴────────────────┴──────────────────────┘
 
 การตรวจสอบ: ถ้า user มี role level >= required level → ผ่าน
-ตัวอย่าง: route ต้องการ user_account (2)
+ตัวอย่าง: route ต้องการ editor (2)
   - admin (3) → ผ่าน ✓
-  - user_account (2) → ผ่าน ✓
-  - visitor (1) → ไม่ผ่าน ✗ → 403
+  - editor (2) → ผ่าน ✓
+  - viewer (1) → ไม่ผ่าน ✗ → 403
 ```
+
+### 3.4 Site Membership Middleware (RequireSiteMember)
+
+Route ฝั่ง admin ที่ผูกกับ `siteId` จะผ่าน middleware **RequireSiteMember** เพื่อตรวจว่า user ปัจจุบันมี access record ใน `site_members` หรือไม่ และใช้ global role เป็นตัวตัดสินความสามารถ:
+
+```
+site_members = user_id + site_id access list
+super_admin = bypass site access
+admin/editor/viewer = ต้องมี membership ของ site นั้น
+```
+
+**super_admin** ข้ามการตรวจสอบสมาชิกไซต์ ส่วน `admin`, `editor`, `viewer` ต้องมีแถวใน `site_members` สำหรับไซต์นั้น
 
 ---
 
 ## 4. Public Portfolio Flow
 
-เมื่อ Frontend เรียก `GET /api/v1/portfolio`:
+**แยกไซต์ตาม `siteId`:** Frontend อาจใช้ `GET /api/v1/public/sites/by-domain?host=<hostname>` เพื่อ resolve ว่า host นั้นชี้ไปที่ `siteId` ใด จากนั้นเรียก `GET /api/v1/public/sites/{siteId}/portfolio`
+
+เมื่อ Frontend เรียก `GET /api/v1/public/sites/{siteId}/portfolio`:
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│  PublicHandler.GetPortfolio()                                  │
+│  PublicHandler.GetPortfolio(siteId)                             │
 │                                                                │
-│  1. Fetch site_settings   ──► MongoDB: site_settings collection│
-│  2. Fetch hero            ──► MongoDB: hero collection         │
-│  3. Fetch about           ──► MongoDB: about collection        │
-│  4. Fetch skills[]        ──► MongoDB: skills (sorted)         │
+│  1. Fetch site_settings   ──► MongoDB: filter ด้วย site_id     │
+│  2. Fetch hero            ──► MongoDB: hero (site-scoped)      │
+│  3. Fetch about           ──► MongoDB: about (site-scoped)      │
+│  4. Fetch skills[]        ──► MongoDB: skills (sorted, site_id) │
 │  5. Fetch projects[]      ──► MongoDB: projects (sorted)       │
-│  6. Fetch experiences[]   ──► MongoDB: experiences (sorted)    │
+│  6. Fetch experiences[]   ──► MongoDB: experiences (sorted)     │
 │  7. Fetch social_links[]  ──► MongoDB: social_links (sorted)   │
 │  8. Build nav_items[]     ──► Hardcoded navigation anchors     │
 │                                                                │
@@ -253,6 +298,8 @@ Client                          API Server
 
 ## 5. Admin CRUD Flow (ตัวอย่าง: Projects)
 
+เส้นทางฝั่ง admin ผูกกับไซต์ เช่น `GET /api/v1/admin/sites/{siteId}/portfolio/projects` (และ collection อื่น ๆ ในกลุ่ม portfolio ใช้รูปแบบเดียวกัน)
+
 ```
                      ┌─────────────────────────────────────┐
                      │        Admin Dashboard (SPA)        │
@@ -260,7 +307,9 @@ Client                          API Server
                                     │
           ┌─────────────────────────┼─────────────────────────┐
           │                         │                         │
-    GET /projects            POST /projects          PUT /projects/{id}
+ GET .../sites/{siteId}/portfolio/projects
+ POST .../sites/{siteId}/portfolio/projects
+ PUT  .../sites/{siteId}/portfolio/projects/{id}
           │                         │                         │
           ▼                         ▼                         ▼
    ┌──────────────┐   ┌──────────────────┐   ┌────────────────────┐
@@ -272,12 +321,12 @@ Client                          API Server
           │                    │                         │
           ▼                    ▼                         ▼
    ┌─────────────────────────────────────────────────────────────┐
-   │                  MongoDB: projects collection               │
+   │         MongoDB: projects collection (filter ด้วย site_id)  │
    └─────────────────────────────────────────────────────────────┘
 
    เพิ่มเติม:
-   - DELETE /projects/{id}     → ลบ project
-   - PUT /projects/reorder     → เรียงลำดับใหม่ด้วย { ids: [...] }
+   - DELETE .../portfolio/projects/{id}     → ลบ project
+   - PUT .../portfolio/projects/reorder     → เรียงลำดับใหม่ด้วย { ids: [...] }
 ```
 
 ---
@@ -287,7 +336,7 @@ Client                          API Server
 ```
 Client                          API Server                    Disk
   │                                │                            │
-  │  POST /api/v1/admin/upload     │                            │
+  │  POST /api/v1/admin/sites/{siteId}/portfolio/upload          │
   │  Content-Type: multipart/form  │                            │
   │  Body: file=<image>            │                            │
   │ ──────────────────────────────►│                            │
@@ -319,7 +368,7 @@ Client                          API Server                    Disk
 ```
 Website Visitor                 API Server                   MongoDB
   │                                │                            │
-  │  POST /api/v1/contact          │                            │
+  │  POST /api/v1/public/sites/{siteId}/portfolio/contacts     │
   │  { name, email,                │                            │
   │    subject, message }          │                            │
   │ ──────────────────────────────►│                            │
@@ -332,17 +381,17 @@ Website Visitor                 API Server                   MongoDB
   │                                │                            │
   │                                │  Insert to                 │
   │                                │  contact_messages           │
-  │                                │  (is_read: false)          │
+  │                                │  (is_read: false, site_id)  │
   │                                │ ──────────────────────────►│
   │                                │                            │
   │  201 Created                   │                            │
   │  { message: "sent" }           │                            │
   │◄────────────────────────────── │                            │
 
-  Admin สามารถ:
-  - GET  /admin/contacts       → ดูรายการทั้งหมด (visitor+)
-  - GET  /admin/contacts/{id}  → ดูรายละเอียด (visitor+)
-  - DELETE /admin/contacts/{id}→ ลบข้อความ (user_account+)
+  Admin สามารถ (ต่อไซต์):
+  - GET  /api/v1/admin/sites/{siteId}/portfolio/contacts       → ดูรายการทั้งหมด (viewer+)
+  - GET  /api/v1/admin/sites/{siteId}/portfolio/contacts/{id}  → ดูรายละเอียด (viewer+)
+  - DELETE /api/v1/admin/sites/{siteId}/portfolio/contacts/{id}  → ลบข้อความ (editor+)
 ```
 
 ---

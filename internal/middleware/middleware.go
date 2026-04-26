@@ -6,12 +6,16 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
+	"go.mongodb.org/mongo-driver/bson/primitive"
+
 	"portfolio-admin-api/internal/model"
+	"portfolio-admin-api/internal/repository"
 	"portfolio-admin-api/pkg/response"
 )
 
@@ -22,6 +26,7 @@ const (
 	UserIDKey    contextKey = "user_id"
 	UsernameKey  contextKey = "username"
 	RoleKey      contextKey = "role"
+	SiteIDKey    contextKey = "site_id"
 )
 
 func Chain(h http.Handler, mws ...func(http.Handler) http.Handler) http.Handler {
@@ -93,20 +98,88 @@ func Recovery(log *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-func CORS(allowedOrigins string) func(http.Handler) http.Handler {
-	origins := strings.Split(allowedOrigins, ",")
+type DomainCache struct {
+	siteRepo      *repository.SiteRepository
+	staticOrigins []string
+	mu            sync.RWMutex
+	dynamicHosts  map[string]bool
+	log           *slog.Logger
+}
+
+func NewDomainCache(siteRepo *repository.SiteRepository, staticOrigins string, log *slog.Logger) *DomainCache {
+	origins := strings.Split(staticOrigins, ",")
 	for i := range origins {
 		origins[i] = strings.TrimSpace(origins[i])
 	}
 
+	dc := &DomainCache{
+		siteRepo:      siteRepo,
+		staticOrigins: origins,
+		dynamicHosts:  make(map[string]bool),
+		log:           log,
+	}
+	dc.Refresh()
+	return dc
+}
+
+func (dc *DomainCache) Refresh() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	domains, err := dc.siteRepo.ListAllDomains(ctx)
+	if err != nil {
+		dc.log.Error("refreshing domain cache", "error", err)
+		return
+	}
+
+	hosts := make(map[string]bool, len(domains))
+	for _, d := range domains {
+		hosts[d] = true
+	}
+
+	dc.mu.Lock()
+	dc.dynamicHosts = hosts
+	dc.mu.Unlock()
+
+	dc.log.Info("domain cache refreshed", "count", len(hosts))
+}
+
+func (dc *DomainCache) StartAutoRefresh(ctx context.Context, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				dc.Refresh()
+			}
+		}
+	}()
+}
+
+func (dc *DomainCache) IsAllowed(origin string) bool {
+	for _, o := range dc.staticOrigins {
+		if o == origin || o == "*" {
+			return true
+		}
+	}
+
+	host := strings.TrimPrefix(origin, "http://")
+	host = strings.TrimPrefix(host, "https://")
+
+	dc.mu.RLock()
+	defer dc.mu.RUnlock()
+	return dc.dynamicHosts[host]
+}
+
+func CORS(dc *DomainCache) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
-			for _, o := range origins {
-				if o == origin || o == "*" {
-					w.Header().Set("Access-Control-Allow-Origin", origin)
-					break
-				}
+			if dc.IsAllowed(origin) {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
 			}
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
@@ -200,4 +273,52 @@ func GetRole(ctx context.Context) string {
 		return r
 	}
 	return ""
+}
+
+func GetSiteID(ctx context.Context) primitive.ObjectID {
+	if id, ok := ctx.Value(SiteIDKey).(primitive.ObjectID); ok {
+		return id
+	}
+	return primitive.NilObjectID
+}
+
+func RequireSiteMember(memberRepo *repository.SiteMemberRepository, minRole string, authMw func(http.HandlerFunc) http.HandlerFunc) func(http.HandlerFunc) http.HandlerFunc {
+	return func(next http.HandlerFunc) http.HandlerFunc {
+		return authMw(func(w http.ResponseWriter, r *http.Request) {
+			siteIDHex := r.PathValue("siteId")
+			siteID, err := primitive.ObjectIDFromHex(siteIDHex)
+			if err != nil {
+				response.Error(w, http.StatusBadRequest, "invalid site ID")
+				return
+			}
+
+			userRole := GetRole(r.Context())
+			if userRole == model.RoleSuperAdmin {
+				ctx := context.WithValue(r.Context(), SiteIDKey, siteID)
+				next(w, r.WithContext(ctx))
+				return
+			}
+
+			if model.RoleLevel(userRole) < model.RoleLevel(minRole) {
+				response.Error(w, http.StatusForbidden, "insufficient permissions")
+				return
+			}
+
+			userIDHex := GetUserID(r.Context())
+			userOID, err := primitive.ObjectIDFromHex(userIDHex)
+			if err != nil {
+				response.Error(w, http.StatusUnauthorized, "invalid user identity")
+				return
+			}
+
+			_, err = memberRepo.FindBySiteAndUser(r.Context(), siteID, userOID)
+			if err != nil {
+				response.Error(w, http.StatusForbidden, "you are not a member of this site")
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), SiteIDKey, siteID)
+			next(w, r.WithContext(ctx))
+		})
+	}
 }

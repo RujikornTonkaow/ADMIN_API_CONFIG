@@ -6,10 +6,32 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-// --- Singleton Documents (one document per collection) ---
+// --- Multi-Site Models ---
+
+type Site struct {
+	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	Name      string             `bson:"name" json:"name"`
+	Slug      string             `bson:"slug" json:"slug"`
+	Type      string             `bson:"type" json:"type"`
+	Domains   []string           `bson:"domains" json:"domains"`
+	CreatedAt time.Time          `bson:"created_at" json:"created_at"`
+	UpdatedAt time.Time          `bson:"updated_at" json:"updated_at"`
+}
+
+type SiteMember struct {
+	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	SiteID    primitive.ObjectID `bson:"site_id" json:"site_id"`
+	UserID    primitive.ObjectID `bson:"user_id" json:"user_id"`
+	Role      string             `bson:"role" json:"role"`
+	CreatedAt time.Time          `bson:"created_at" json:"created_at"`
+	UpdatedAt time.Time          `bson:"updated_at" json:"updated_at"`
+}
+
+// --- Singleton Documents (one document per site per collection) ---
 
 type SiteSettings struct {
 	ID              primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	SiteID          primitive.ObjectID `bson:"site_id" json:"site_id"`
 	SiteTitle       string             `bson:"site_title" json:"site_title"`
 	PageTitle       string             `bson:"page_title" json:"page_title"`
 	MetaDescription string             `bson:"meta_description" json:"meta_description"`
@@ -21,6 +43,7 @@ type SiteSettings struct {
 
 type Hero struct {
 	ID               primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	SiteID           primitive.ObjectID `bson:"site_id" json:"site_id"`
 	Greeting         string             `bson:"greeting" json:"greeting"`
 	FullName         string             `bson:"full_name" json:"full_name"`
 	Subtitle         string             `bson:"subtitle" json:"subtitle"`
@@ -38,6 +61,7 @@ type Stat struct {
 
 type About struct {
 	ID              primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	SiteID          primitive.ObjectID `bson:"site_id" json:"site_id"`
 	Title           string             `bson:"title" json:"title"`
 	BioParagraphs   []string           `bson:"bio_paragraphs" json:"bio_paragraphs"`
 	PersonalityTags []string           `bson:"personality_tags" json:"personality_tags"`
@@ -49,6 +73,7 @@ type About struct {
 
 type Skill struct {
 	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	SiteID    primitive.ObjectID `bson:"site_id" json:"site_id"`
 	Name      string             `bson:"name" json:"name"`
 	Icon      string             `bson:"icon" json:"icon"`
 	Category  string             `bson:"category" json:"category"`
@@ -59,6 +84,7 @@ type Skill struct {
 
 type Project struct {
 	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	SiteID      primitive.ObjectID `bson:"site_id" json:"site_id"`
 	Title       string             `bson:"title" json:"title"`
 	Description string             `bson:"description" json:"description"`
 	Tags        []string           `bson:"tags" json:"tags"`
@@ -72,6 +98,7 @@ type Project struct {
 
 type Experience struct {
 	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	SiteID      primitive.ObjectID `bson:"site_id" json:"site_id"`
 	Role        string             `bson:"role" json:"role"`
 	Company     string             `bson:"company" json:"company"`
 	Period      string             `bson:"period" json:"period"`
@@ -84,6 +111,7 @@ type Experience struct {
 
 type SocialLink struct {
 	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	SiteID    primitive.ObjectID `bson:"site_id" json:"site_id"`
 	Name      string             `bson:"name" json:"name"`
 	URL       string             `bson:"url" json:"url"`
 	Icon      string             `bson:"icon" json:"icon"`
@@ -94,6 +122,7 @@ type SocialLink struct {
 
 type ContactMessage struct {
 	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	SiteID    primitive.ObjectID `bson:"site_id" json:"site_id"`
 	Name      string             `bson:"name" json:"name"`
 	Email     string             `bson:"email" json:"email"`
 	Subject   string             `bson:"subject" json:"subject"`
@@ -103,19 +132,49 @@ type ContactMessage struct {
 }
 
 const (
-	RoleAdmin       = "admin"
-	RoleUserAccount = "user_account"
-	RoleVisitor     = "visitor"
+	RoleSuperAdmin = "super_admin"
+	RoleAdmin      = "admin"
+	RoleEditor     = "editor"
+	RoleViewer     = "viewer"
 )
 
 var ValidRoles = map[string]int{
-	RoleVisitor:     1,
-	RoleUserAccount: 2,
-	RoleAdmin:       3,
+	RoleViewer:     1,
+	RoleEditor:     2,
+	RoleAdmin:      3,
+	RoleSuperAdmin: 4,
 }
 
 func RoleLevel(role string) int {
 	return ValidRoles[role]
+}
+
+const (
+	SiteRoleOwner  = "owner"
+	SiteRoleEditor = "editor"
+	SiteRoleViewer = "viewer"
+)
+
+var ValidSiteRoles = map[string]int{
+	SiteRoleViewer: 1,
+	SiteRoleEditor: 2,
+	SiteRoleOwner:  3,
+}
+
+func SiteRoleLevel(role string) int {
+	return ValidSiteRoles[role]
+}
+
+const (
+	SiteTypePortfolio = "portfolio"
+	SiteTypeShop      = "shop"
+	SiteTypeFinance   = "finance"
+)
+
+var ValidSiteTypes = map[string]bool{
+	SiteTypePortfolio: true,
+	SiteTypeShop:      true,
+	SiteTypeFinance:   true,
 }
 
 type AdminUser struct {
@@ -162,6 +221,42 @@ type ChangePasswordRequest struct {
 
 type ReorderRequest struct {
 	IDs []string `json:"ids"`
+}
+
+type CreateSiteRequest struct {
+	Name    string   `json:"name"`
+	Slug    string   `json:"slug"`
+	Type    string   `json:"type"`
+	Domains []string `json:"domains"`
+}
+
+type UpdateSiteRequest struct {
+	Name    string   `json:"name"`
+	Slug    string   `json:"slug"`
+	Domains []string `json:"domains"`
+}
+
+type AddSiteMemberRequest struct {
+	UserID string `json:"user_id"`
+	Role   string `json:"role"`
+}
+
+type UpdateSiteMemberRequest struct {
+	Role string `json:"role"`
+}
+
+type UserMembershipAssignment struct {
+	SiteID string `json:"site_id"`
+}
+
+type UpdateUserMembershipsRequest struct {
+	Memberships []UserMembershipAssignment `json:"memberships"`
+}
+
+type UserMembershipResponse struct {
+	ID     string `json:"id"`
+	SiteID string `json:"site_id"`
+	UserID string `json:"user_id"`
 }
 
 type ContactRequest struct {

@@ -4,6 +4,33 @@
 
 ---
 
+## Implementation Decision — Reset แล้ว seed ใหม่
+
+โปรเจกต์นี้เลือกเริ่ม multi-site ด้วยการ **ลบข้อมูล portfolio เก่าและ seed ใหม่ทั้งหมด** ไม่ต้องทำ migration จาก schema เดิมที่ไม่มี `site_id`
+
+แนวทางใช้งาน:
+
+- ตั้ง `RESET_DATABASE_ON_START=true` ตอนรัน server เพื่อ drop database แล้ว seed ใหม่
+- เมื่อ `admin_users` ว่าง ระบบจะ seed admin user, default site, site member และ portfolio documents ใหม่พร้อม `site_id`
+- ห้ามเก็บข้อมูล portfolio ที่ไม่มี `site_id` ปนกับ schema ใหม่
+- ห้ามสร้าง compatibility layer สำหรับ legacy routes เช่น `/api/v1/admin/projects`
+
+ตัวอย่าง local dev:
+
+```env
+RESET_DATABASE_ON_START=true
+```
+
+หลัง reset สำเร็จแล้ว ถ้าไม่ต้องการลบข้อมูลทุกครั้งที่ start ให้เปลี่ยนกลับเป็น:
+
+```env
+RESET_DATABASE_ON_START=false
+```
+
+ถ้าต้อง deploy production จริงในอนาคตและต้องรักษาข้อมูลลูกค้า ค่อยออกแบบ migration แยกต่างหาก แต่ scope ปัจจุบันคือ reset + seed ใหม่
+
+---
+
 ## Database Overview
 
 | หัวข้อ | รายละเอียด |
@@ -20,6 +47,8 @@
 ```
 portfolio_admin (database)
 ├── admin_users          ← ข้อมูล users (มี unique index)
+├── sites                ← ข้อมูล sites ที่จัดการ (มี unique index บน slug)
+├── site_members         ← สมาชิกของแต่ละ site (มี unique compound index บน site_id+user_id)
 ├── site_settings        ← Singleton: ตั้งค่า site
 ├── hero                 ← Singleton: Hero section
 ├── about                ← Singleton: About section
@@ -43,7 +72,7 @@ portfolio_admin (database)
 | `_id` | `ObjectID` | `_id,omitempty` | `id` | Primary key (auto-generated) |
 | `username` | `string` | `username` | `username` | ชื่อผู้ใช้ (unique) |
 | `password` | `string` | `password` | `-` (hidden) | Password hash (bcrypt) |
-| `role` | `string` | `role` | `role` | `admin` / `user_account` / `visitor` |
+| `role` | `string` | `role` | `role` | `super_admin` / `admin` / `editor` / `viewer` |
 | `created_at` | `time.Time` | `created_at` | `created_at` | วันที่สร้าง |
 | `updated_at` | `time.Time` | `updated_at` | `updated_at` | วันที่แก้ไขล่าสุด |
 
@@ -61,7 +90,7 @@ portfolio_admin (database)
   "_id": ObjectId("6789abcdef012345abcdef12"),
   "username": "admin",
   "password": "$2a$10$...(bcrypt hash)...",
-  "role": "admin",
+  "role": "super_admin",
   "created_at": ISODate("2025-01-15T10:00:00Z"),
   "updated_at": ISODate("2025-01-15T10:00:00Z")
 }
@@ -71,21 +100,23 @@ portfolio_admin (database)
 
 | Role | Level | คำอธิบาย |
 |------|-------|---------|
-| `visitor` | 1 | สิทธิ์อ่านอย่างเดียว (ดู content, อ่าน contacts) |
-| `user_account` | 2 | CRUD content, upload files, ลบ contacts |
-| `admin` | 3 | ทุกอย่าง + จัดการ users |
+| `viewer` | 1 | เห็นเฉพาะ Messages/Contacts ของ site ที่ได้รับสิทธิ์ |
+| `editor` | 2 | แก้ content ของ site ที่ได้รับสิทธิ์ แต่ไม่เห็น User Management |
+| `admin` | 3 | แก้ content และจัดการ users เฉพาะ site ที่ได้รับสิทธิ์ |
+| `super_admin` | 4 | เจ้าของระบบ เห็นทุก site และจัดการผู้ใช้ได้ทั้งหมด |
 
 ---
 
 ## 2. site_settings (Singleton)
 
-ตั้งค่าทั่วไปของเว็บไซต์ — มี 1 document เท่านั้น
+ตั้งค่าทั่วไปของเว็บไซต์ — มี 1 document ต่อ site
 
 ### Schema
 
 | Field | Type | BSON Tag | คำอธิบาย |
 |-------|------|----------|---------|
 | `_id` | `ObjectID` | `_id,omitempty` | Primary key |
+| `site_id` | `ObjectID` | `site_id` | ID ของ site ที่ข้อมูลนี้เป็นของ |
 | `site_title` | `string` | `site_title` | ชื่อ site (แสดงใน header/navbar) |
 | `page_title` | `string` | `page_title` | HTML `<title>` |
 | `meta_description` | `string` | `meta_description` | SEO meta description |
@@ -99,6 +130,7 @@ portfolio_admin (database)
 ```json
 {
   "_id": ObjectId("..."),
+  "site_id": ObjectId("..."),
   "site_title": "Portfolio",
   "page_title": "Portfolio | Full-Stack Developer",
   "meta_description": "Full-Stack Developer portfolio...",
@@ -113,13 +145,14 @@ portfolio_admin (database)
 
 ## 3. hero (Singleton)
 
-ข้อมูล Hero section — ส่วนแรกของหน้าเว็บ มี 1 document เท่านั้น
+ข้อมูล Hero section — ส่วนแรกของหน้าเว็บ มี 1 document ต่อ site
 
 ### Schema
 
 | Field | Type | BSON Tag | คำอธิบาย |
 |-------|------|----------|---------|
 | `_id` | `ObjectID` | `_id,omitempty` | Primary key |
+| `site_id` | `ObjectID` | `site_id` | ID ของ site ที่ข้อมูลนี้เป็นของ |
 | `greeting` | `string` | `greeting` | คำทักทาย เช่น "Hello, I'm" |
 | `full_name` | `string` | `full_name` | ชื่อเต็ม |
 | `subtitle` | `string` | `subtitle` | คำอธิบายสั้น ๆ |
@@ -134,6 +167,7 @@ portfolio_admin (database)
 ```json
 {
   "_id": ObjectId("..."),
+  "site_id": ObjectId("..."),
   "greeting": "Hello, I'm",
   "full_name": "Puvakorn Pannasirichard",
   "subtitle": "Full-Stack Developer crafting performant, scalable web applications",
@@ -149,13 +183,14 @@ portfolio_admin (database)
 
 ## 4. about (Singleton)
 
-ข้อมูล About section มี 1 document เท่านั้น
+ข้อมูล About section — มี 1 document ต่อ site
 
 ### Schema
 
 | Field | Type | BSON Tag | คำอธิบาย |
 |-------|------|----------|---------|
 | `_id` | `ObjectID` | `_id,omitempty` | Primary key |
+| `site_id` | `ObjectID` | `site_id` | ID ของ site ที่ข้อมูลนี้เป็นของ |
 | `title` | `string` | `title` | หัวข้อ About |
 | `bio_paragraphs` | `[]string` | `bio_paragraphs` | เนื้อหา bio แต่ละย่อหน้า |
 | `personality_tags` | `[]string` | `personality_tags` | Tags บุคลิกภาพ |
@@ -174,6 +209,7 @@ portfolio_admin (database)
 ```json
 {
   "_id": ObjectId("..."),
+  "site_id": ObjectId("..."),
   "title": "Passionate about building great software",
   "bio_paragraphs": [
     "I'm a Full-Stack Developer with a passion...",
@@ -201,6 +237,7 @@ portfolio_admin (database)
 | Field | Type | BSON Tag | คำอธิบาย |
 |-------|------|----------|---------|
 | `_id` | `ObjectID` | `_id,omitempty` | Primary key |
+| `site_id` | `ObjectID` | `site_id` | ID ของ site ที่ข้อมูลนี้เป็นของ |
 | `name` | `string` | `name` | ชื่อ skill เช่น "Vue.js", "Go" |
 | `icon` | `string` | `icon` | ชื่อ icon (Iconify format) เช่น "logos:vue" |
 | `category` | `string` | `category` | หมวดหมู่: `frontend`, `backend`, `devops`, `tools` |
@@ -228,6 +265,7 @@ portfolio_admin (database)
 | Field | Type | BSON Tag | คำอธิบาย |
 |-------|------|----------|---------|
 | `_id` | `ObjectID` | `_id,omitempty` | Primary key |
+| `site_id` | `ObjectID` | `site_id` | ID ของ site ที่ข้อมูลนี้เป็นของ |
 | `title` | `string` | `title` | ชื่อโปรเจกต์ |
 | `description` | `string` | `description` | คำอธิบายโปรเจกต์ |
 | `tags` | `[]string` | `tags` | แท็กเทคโนโลยี เช่น ["Vue 3", "Go"] |
@@ -249,6 +287,7 @@ portfolio_admin (database)
 | Field | Type | BSON Tag | คำอธิบาย |
 |-------|------|----------|---------|
 | `_id` | `ObjectID` | `_id,omitempty` | Primary key |
+| `site_id` | `ObjectID` | `site_id` | ID ของ site ที่ข้อมูลนี้เป็นของ |
 | `role` | `string` | `role` | ตำแหน่งงาน |
 | `company` | `string` | `company` | ชื่อบริษัท |
 | `period` | `string` | `period` | ช่วงเวลา เช่น "2024 - Present" |
@@ -269,6 +308,7 @@ portfolio_admin (database)
 | Field | Type | BSON Tag | คำอธิบาย |
 |-------|------|----------|---------|
 | `_id` | `ObjectID` | `_id,omitempty` | Primary key |
+| `site_id` | `ObjectID` | `site_id` | ID ของ site ที่ข้อมูลนี้เป็นของ |
 | `name` | `string` | `name` | ชื่อ platform เช่น "GitHub" |
 | `url` | `string` | `url` | URL ลิงก์ |
 | `icon` | `string` | `icon` | ชื่อ icon (Iconify) เช่น "mdi:github" |
@@ -287,12 +327,71 @@ portfolio_admin (database)
 | Field | Type | BSON Tag | คำอธิบาย |
 |-------|------|----------|---------|
 | `_id` | `ObjectID` | `_id,omitempty` | Primary key |
+| `site_id` | `ObjectID` | `site_id` | ID ของ site ที่ข้อมูลนี้เป็นของ |
 | `name` | `string` | `name` | ชื่อผู้ส่ง |
 | `email` | `string` | `email` | อีเมลผู้ส่ง |
 | `subject` | `string` | `subject` | หัวข้อ |
 | `message` | `string` | `message` | เนื้อหาข้อความ |
 | `is_read` | `bool` | `is_read` | อ่านแล้วหรือยัง (default: false) |
 | `created_at` | `time.Time` | `created_at` | วันที่ส่ง |
+
+---
+
+## 10. sites
+
+ข้อมูล site ที่ระบบจัดการ (portfolio / shop / finance ฯลฯ)
+
+### Schema
+
+| Field | Type | BSON Tag | คำอธิบาย |
+|-------|------|----------|---------|
+| `_id` | `ObjectID` | `_id,omitempty` | Primary key |
+| `name` | `string` | `name` | ชื่อแสดงของ site |
+| `slug` | `string` | `slug` | slug สำหรับ URL/อ้างอิง (unique) |
+| `type` | `string` | `type` | ประเภท: `portfolio` / `shop` / `finance` |
+| `domains` | `[]string` | `domains` | รายการโดเมนที่ผูกกับ site |
+| `created_at` | `time.Time` | `created_at` | วันที่สร้าง |
+| `updated_at` | `time.Time` | `updated_at` | วันที่แก้ไขล่าสุด |
+
+### Indexes
+
+| Index | Fields | Type | คำอธิบาย |
+|-------|--------|------|---------|
+| `_id_` | `_id` | Default | MongoDB default primary key |
+| `slug_1` | `slug` | **Unique** | ป้องกัน slug ซ้ำ |
+| `domains_1` | `domains` | Non-unique | ค้นหา/กรองตามโดเมน (multikey) |
+
+---
+
+## 11. site_members
+
+สมาชิกของแต่ละ site — เชื่อม `admin_users` กับ `sites` พร้อมบทบาทภายใน site
+
+### Schema
+
+| Field | Type | BSON Tag | คำอธิบาย |
+|-------|------|----------|---------|
+| `_id` | `ObjectID` | `_id,omitempty` | Primary key |
+| `site_id` | `ObjectID` | `site_id` | อ้างอิง site |
+| `user_id` | `ObjectID` | `user_id` | อ้างอิง admin user |
+| `role` | `string` | `role` | บทบาทใน site: `owner` / `editor` / `viewer` |
+| `created_at` | `time.Time` | `created_at` | วันที่สร้าง |
+| `updated_at` | `time.Time` | `updated_at` | วันที่แก้ไขล่าสุด |
+
+### Indexes
+
+| Index | Fields | Type | คำอธิบาย |
+|-------|--------|------|---------|
+| `_id_` | `_id` | Default | MongoDB default primary key |
+| `site_id_1_user_id_1` | `site_id`, `user_id` | **Unique compound** | ผู้ใช้หนึ่งคนเป็นสมาชิกของ site เดียวได้เพียงหนึ่งแถว |
+
+### Site Role Values
+
+| Role | Level | คำอธิบาย |
+|------|-------|---------|
+| `viewer` | 1 | สิทธิ์ดูข้อมูล site |
+| `editor` | 2 | แก้ไขเนื้อหา portfolio ของ site |
+| `owner` | 3 | ควบคุม site และสมาชิก (สูงสุดในระดับ site) |
 
 ---
 
@@ -303,19 +402,28 @@ portfolio_admin (database)
                     │  admin_users    │
                     │  (auth + RBAC)  │
                     └────────┬────────┘
-                             │ JWT token contains
-                             │ user_id + role
-                             ▼
+                             │
+              ┌──────────────┼──────────────┐
+              │              │              │
+              │ JWT:         │ many-to-many │
+              │ user_id+role │ ผ่าน membership
+              ▼              ▼              │
+        ┌─────────────┐  ┌──────────────────┐
+        │ site_members│──│      sites       │
+        │ site_id +   │  │ slug, type, ...  │
+        │ user_id +   │  └────────┬─────────┘
+        │ site role   │           │
+        └─────────────┘           │ site_id บนเอกสาร portfolio
+                                  ▼
         ┌────────────────────────────────────────┐
         │            Admin Operations            │
-        │  (CRUD via JWT-authenticated requests) │
+        │  (CRUD via JWT + site membership)      │
         └────┬───────┬───────┬──────┬───────┬────┘
              │       │       │      │       │
              ▼       ▼       ▼      ▼       ▼
-     ┌───────┐ ┌─────┐ ┌─────┐ ┌──────┐ ┌──────────┐
-     │skills │ │hero │ │about│ │sites │ │projects  │
-     └───────┘ └─────┘ └─────┘ │setts │ └──────────┘
-                               └──────┘
+     ┌──────────────┐ ┌─────┐ ┌─────┐ ┌──────────┐ ┌──────────┐
+     │site_settings │ │hero │ │about│ │  skills  │ │ projects │
+     └──────────────┘ └─────┘ └─────┘ └──────────┘ └──────────┘
              │       │       │
              ▼       ▼       ▼
      ┌───────────┐ ┌──────────┐ ┌────────────────┐
@@ -333,8 +441,9 @@ portfolio_admin (database)
 
 **หมายเหตุ:**
 - ไม่มี foreign key references ระหว่าง collections (MongoDB ไม่ enforce foreign keys)
-- `admin_users` เชื่อมกับ operations อื่น ๆ ผ่าน JWT token (ไม่ได้ join ใน DB)
-- Singleton collections (site_settings, hero, about) ใช้ Upsert pattern — ถ้ายังไม่มี document จะสร้างใหม่
+- `admin_users` เชื่อมกับ `sites` ผ่าน `site_members` (`user_id` + `site_id` + `role` ระดับ site); JWT ยังคงระบุตัวตนผู้ใช้สำหรับ auth
+- เอกสาร portfolio ทุกประเภทอ้างอิง `site_id` ไปยัง `sites`
+- Singleton collections (site_settings, hero, about) มีได้ 1 document ต่อ `site_id` — ใช้ Upsert pattern ภายใต้ขอบเขต site
 
 ---
 
@@ -345,22 +454,26 @@ portfolio_admin (database)
 | Collection | จำนวน Documents | คำอธิบาย |
 |-----------|----------------|---------|
 | `admin_users` | 1 | Admin user (username/password จาก env vars) |
-| `site_settings` | 1 | Default site settings (title, theme, meta) |
-| `hero` | 1 | Default hero content |
-| `about` | 1 | Default about content พร้อม stats 4 รายการ |
-| `skills` | 14 | ตัวอย่าง skills (Vue, Go, Docker ฯลฯ) |
-| `projects` | 2 | ตัวอย่าง projects |
-| `experiences` | 2 | ตัวอย่าง experiences |
-| `social_links` | 4 | ตัวอย่าง links (GitHub, LinkedIn, Twitter, Email) |
+| `sites` | 1 | Default site หนึ่งรายการ |
+| `site_members` | 1 | ผู้ใช้ admin คนแรกเป็น `owner` ของ default site |
+| `site_settings` | 1 | Default site settings (title, theme, meta) — มี `site_id` |
+| `hero` | 1 | Default hero content — มี `site_id` |
+| `about` | 1 | Default about content พร้อม stats 4 รายการ — มี `site_id` |
+| `skills` | 14 | ตัวอย่าง skills (Vue, Go, Docker ฯลฯ) — ทุกแถวมี `site_id` |
+| `projects` | 2 | ตัวอย่าง projects — มี `site_id` |
+| `experiences` | 2 | ตัวอย่าง experiences — มี `site_id` |
+| `social_links` | 4 | ตัวอย่าง links (GitHub, LinkedIn, Twitter, Email) — มี `site_id` |
+
+ข้อมูล portfolio ทั้งหมดที่ seed จะอ้างอิง `site_id` ของ default site เดียวกัน
 
 ---
 
 ## Sort Order Convention
 
-Collections ที่รองรับ Reorder API (`PUT .../reorder`):
-- `projects` — `PUT /api/v1/admin/projects/reorder`
-- `experiences` — `PUT /api/v1/admin/experiences/reorder`
-- `social_links` — `PUT /api/v1/admin/social-links/reorder`
+Collections ที่รองรับ Reorder API (`PUT .../reorder`) — เส้นทางแยกตาม site:
+- `projects` — `PUT /api/v1/admin/sites/{siteId}/portfolio/projects/reorder`
+- `experiences` — `PUT /api/v1/admin/sites/{siteId}/portfolio/experiences/reorder`
+- `social_links` — `PUT /api/v1/admin/sites/{siteId}/portfolio/social-links/reorder`
 
 **⚠ skills ไม่มี reorder endpoint** — `sort_order` ของ skills กำหนดตอน `POST` (สร้าง) เท่านั้น และไม่สามารถเปลี่ยนผ่าน `PUT` (update จะไม่แก้ `sort_order`)
 
@@ -370,7 +483,7 @@ Collections ที่รองรับ Reorder API (`PUT .../reorder`):
 - Reorder endpoint รับ array ของ IDs → กำหนด sort_order ตาม index position
 
 ```json
-// PUT /api/v1/admin/projects/reorder
+// PUT /api/v1/admin/sites/{siteId}/portfolio/projects/reorder
 {
   "ids": ["id_c", "id_a", "id_b"]
 }

@@ -21,9 +21,9 @@ func NewSocialLinkRepository(db *mongo.Database) *SocialLinkRepository {
 	return &SocialLinkRepository{col: db.Collection("social_links")}
 }
 
-func (r *SocialLinkRepository) List(ctx context.Context) ([]model.SocialLink, error) {
+func (r *SocialLinkRepository) List(ctx context.Context, siteID primitive.ObjectID) ([]model.SocialLink, error) {
 	opts := options.Find().SetSort(bson.D{{Key: "sort_order", Value: 1}})
-	cursor, err := r.col.Find(ctx, bson.M{}, opts)
+	cursor, err := r.col.Find(ctx, bson.M{"site_id": siteID}, opts)
 	if err != nil {
 		return nil, fmt.Errorf("listing social links: %w", err)
 	}
@@ -39,12 +39,13 @@ func (r *SocialLinkRepository) List(ctx context.Context) ([]model.SocialLink, er
 	return links, nil
 }
 
-func (r *SocialLinkRepository) Create(ctx context.Context, s model.SocialLink) (model.SocialLink, error) {
+func (r *SocialLinkRepository) Create(ctx context.Context, siteID primitive.ObjectID, s model.SocialLink) (model.SocialLink, error) {
 	now := time.Now()
+	s.SiteID = siteID
 	s.CreatedAt = now
 	s.UpdatedAt = now
 
-	count, err := r.col.CountDocuments(ctx, bson.M{})
+	count, err := r.col.CountDocuments(ctx, bson.M{"site_id": siteID})
 	if err != nil {
 		return s, fmt.Errorf("counting social links for sort order: %w", err)
 	}
@@ -58,14 +59,14 @@ func (r *SocialLinkRepository) Create(ctx context.Context, s model.SocialLink) (
 	return s, nil
 }
 
-func (r *SocialLinkRepository) Update(ctx context.Context, id primitive.ObjectID, s model.SocialLink) (model.SocialLink, error) {
+func (r *SocialLinkRepository) Update(ctx context.Context, siteID, id primitive.ObjectID, s model.SocialLink) (model.SocialLink, error) {
 	s.UpdatedAt = time.Now()
 	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
 
 	var result model.SocialLink
 	err := r.col.FindOneAndUpdate(
 		ctx,
-		bson.M{"_id": id},
+		bson.M{"_id": id, "site_id": siteID},
 		bson.M{"$set": bson.M{
 			"name":       s.Name,
 			"url":        s.URL,
@@ -80,8 +81,8 @@ func (r *SocialLinkRepository) Update(ctx context.Context, id primitive.ObjectID
 	return result, nil
 }
 
-func (r *SocialLinkRepository) Delete(ctx context.Context, id primitive.ObjectID) error {
-	res, err := r.col.DeleteOne(ctx, bson.M{"_id": id})
+func (r *SocialLinkRepository) Delete(ctx context.Context, siteID, id primitive.ObjectID) error {
+	res, err := r.col.DeleteOne(ctx, bson.M{"_id": id, "site_id": siteID})
 	if err != nil {
 		return fmt.Errorf("deleting social link: %w", err)
 	}
@@ -91,10 +92,10 @@ func (r *SocialLinkRepository) Delete(ctx context.Context, id primitive.ObjectID
 	return nil
 }
 
-func (r *SocialLinkRepository) Reorder(ctx context.Context, ids []primitive.ObjectID) error {
+func (r *SocialLinkRepository) Reorder(ctx context.Context, siteID primitive.ObjectID, ids []primitive.ObjectID) error {
 	for i, id := range ids {
 		_, err := r.col.UpdateOne(ctx,
-			bson.M{"_id": id},
+			bson.M{"_id": id, "site_id": siteID},
 			bson.M{"$set": bson.M{"sort_order": i}},
 		)
 		if err != nil {

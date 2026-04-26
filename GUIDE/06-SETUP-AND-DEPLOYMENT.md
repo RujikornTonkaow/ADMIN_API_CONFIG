@@ -60,9 +60,20 @@ ADMIN_PASSWORD=your-secure-password
 UPLOAD_DIR=./uploads
 MAX_UPLOAD_SIZE_MB=10
 
-# CORS — ใส่ origin ของ frontend
-ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001
+# CORS — ใส่ origin ของ frontend (หลายโดเมน คั่นด้วย comma — รองรับหลายไซต์ / admin แยกโดเมน)
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001,https://admin.example.com
 ```
+
+**ข้อมูล Seed เริ่มต้น:** ครั้งแรกที่ DB ว่าง ระบบจะ seed ให้อัตโนมัติ — สร้างผู้ใช้ admin, site เริ่มต้น (ชื่อ `My Portfolio`, slug `default`, type `portfolio`, domains `["localhost:3000"]`), แถว `site_member` (admin เป็น owner ของ site นี้) และข้อมูล portfolio ทั้งชุดที่ผูก `site_id` กับ site เริ่มต้น
+
+**เส้นทาง API แบบ multi-site (เทียบของเดิม):**
+
+| เดิม | ใหม่ |
+|------|------|
+| `GET /api/v1/portfolio` | `GET /api/v1/public/sites/{siteId}/portfolio` |
+| `GET/POST /api/v1/admin/skills` ฯลฯ | `.../api/v1/admin/sites/{siteId}/portfolio/skills` |
+| ส่วนอื่นของ portfolio (hero, about, projects, experiences, social-links, contacts, upload, site-settings) | อยู่ภายใต้ `/api/v1/admin/sites/{siteId}/portfolio/...` ตามชื่อ resource |
+| Submit contact สาธารณะ | `POST /api/v1/public/sites/{siteId}/portfolio/contacts` |
 
 ### Step 3: รัน Docker Compose
 
@@ -86,8 +97,14 @@ docker compose down -v
 ### Step 4: ทดสอบ
 
 ```bash
-# ตรวจสอบว่า API ทำงาน
-curl http://localhost:8080/api/v1/portfolio
+# แก้ไข public routes ให้มี siteId — ดึง site จาก domain ที่ seed ไว้ (localhost:3000)
+curl "http://localhost:8080/api/v1/public/sites/by-domain?host=localhost%3A3000"
+
+# ใช้ค่า _id จาก JSON ด้านบน แทน {siteId} แล้วดึง portfolio สาธารณะ
+curl "http://localhost:8080/api/v1/public/sites/{siteId}/portfolio"
+
+# ตัวอย่าง admin (ต้องมี JWT หลัง login) — CRUD skills ของไซต์นั้น
+# curl -H "Authorization: Bearer <token>" "http://localhost:8080/api/v1/admin/sites/{siteId}/portfolio/skills"
 
 # ทดสอบ login
 curl -X POST http://localhost:8080/api/v1/admin/auth/login \
@@ -139,10 +156,11 @@ docker run -d \
 cp .env.example .env
 ```
 
-แก้ไข `MONGO_URI` ให้ชี้ไป localhost:
+แก้ไข `MONGO_URI` ให้ชี้ไป localhost (และตั้ง CORS ให้ครบทุก origin ที่ใช้ — รองรับหลายโดเมนสำหรับ multi-site):
 
 ```env
 MONGO_URI=mongodb://localhost:27017
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001,https://admin.example.com
 ```
 
 ### Step 5: รัน Server
@@ -188,13 +206,13 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/server-linux ./cmd/server
 | `ADMIN_PASSWORD` | No | `changeme123` | Password ของ admin ที่ seed ตอนเริ่มต้น |
 | `UPLOAD_DIR` | No | `./uploads` | Directory สำหรับเก็บไฟล์ที่อัปโหลด |
 | `MAX_UPLOAD_SIZE_MB` | No | `10` | ขนาดไฟล์สูงสุดที่อัปโหลดได้ (MB) |
-| `ALLOWED_ORIGINS` | No | `http://localhost:3000` | CORS allowed origins (คั่นด้วย `,`) |
+| `ALLOWED_ORIGINS` | No | `http://localhost:3000` | CORS allowed origins หลายค่าได้ (คั่นด้วย `,`) — ใช้เมื่อมีหลายโดเมน (public site / admin ฯลฯ) |
 
 ### สิ่งที่ต้องเปลี่ยนใน Production
 
 1. **`JWT_SECRET`** — ต้องเปลี่ยนเป็น random string ยาว ๆ (เช่น 64+ characters)
 2. **`ADMIN_PASSWORD`** — ต้องเปลี่ยนเป็นรหัสผ่านที่ปลอดภัย
-3. **`ALLOWED_ORIGINS`** — ต้องเปลี่ยนเป็น domain จริงของ frontend
+3. **`ALLOWED_ORIGINS`** — ต้องใส่ domain จริงของทุก frontend ที่เรียก API (หลายค่าคั่นด้วย comma) เพื่อรองรับหลายไซต์
 4. **`MONGO_URI`** — ใช้ connection string จริงพร้อม authentication
 
 ---
@@ -294,15 +312,17 @@ db.dropDatabase()
 
 ## Healthcheck
 
-API มี healthcheck endpoint ที่ Docker ใช้ตรวจสอบ:
+Public portfolio เดิมที่ `/api/v1/portfolio` ถูกย้ายเป็นแบบ multi-site แล้ว — ตรวจสุขภาพควรใช้ endpoint ที่ไม่ต้องรู้ `siteId` ล่วงหน้า เช่น resolve โดเมน (หลัง seed จะมี `localhost:3000`):
 
 ```bash
-# ตรวจสอบว่า API ทำงานปกติ
-curl http://localhost:8080/api/v1/portfolio
+# ตรวจสอบว่า API + DB + seed ทำงานสอดคล้องกัน (ควรได้ 200 และ JSON ของ site)
+curl "http://localhost:8080/api/v1/public/sites/by-domain?host=localhost%3A3000"
 
-# ถ้าได้ 200 OK = API healthy
-# ถ้าได้ error = มีปัญหา (ดู logs)
+# หรือถ้ามี siteId แล้ว จะยืนยัน portfolio ได้โดยตรง
+# curl "http://localhost:8080/api/v1/public/sites/{siteId}/portfolio"
 ```
+
+**หมายเหตุ:** ถ้า `Dockerfile` ยังอ้าง `HEALTHCHECK` ไปที่ `/api/v1/portfolio` ควรอัปเดตเป็น URL ที่เหมาะสม (เช่น `by-domain` ด้านบน) ให้สอดคล้องกับสถาปัตยกรรมใหม่
 
 Docker Compose จะ:
 - ตรวจสอบ API ทุก 30 วินาที
@@ -352,8 +372,8 @@ docker compose restart api
 
 **แก้ไข:**
 ```bash
-# เพิ่ม origin ใน .env
-ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001,http://your-domain.com
+# เพิ่ม origin ใน .env (หลายโดเมนสำหรับหลายไซต์ / แอดมิน)
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001,https://admin.example.com,https://your-public-site.com
 
 # Restart API
 docker compose restart api
@@ -408,7 +428,7 @@ docker volume ls | grep portfolio
 
 - [ ] เปลี่ยน `JWT_SECRET` เป็น random string ที่แข็งแกร่ง (64+ characters)
 - [ ] เปลี่ยน `ADMIN_PASSWORD` เป็นรหัสผ่านที่ปลอดภัย
-- [ ] ตั้งค่า `ALLOWED_ORIGINS` เป็น domain จริง (ไม่ใช่ localhost)
+- [ ] ตั้งค่า `ALLOWED_ORIGINS` ให้ครบทุก domain จริงที่เรียก API (คั่นด้วย comma)
 - [ ] ใช้ MongoDB ที่มี authentication (`MONGO_URI` พร้อม username/password)
 - [ ] ตั้งค่า HTTPS (TLS) ผ่าน reverse proxy (nginx/traefik)
 - [ ] ตั้งค่า persistent storage สำหรับ uploads volume

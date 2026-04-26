@@ -26,6 +26,6 @@ USER appuser
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget -qO- http://localhost:8080/api/v1/portfolio || exit 1
+    CMD wget -qO- http://localhost:8080/api/v1/public/sites/by-domain?host=localhost:3000 || exit 1
 
 ENTRYPOINT ["./server"]

@@ -20,7 +20,9 @@ func NewAboutHandler(repo *repository.AboutRepository, log *slog.Logger) *AboutH
 }
 
 func (h *AboutHandler) Get(w http.ResponseWriter, r *http.Request) {
-	about, err := h.repo.Get(r.Context())
+	siteID := middleware.GetSiteID(r.Context())
+
+	about, err := h.repo.Get(r.Context(), siteID)
 	if err != nil {
 		h.log.Error("getting about",
 			"error", err,
@@ -33,6 +35,8 @@ func (h *AboutHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AboutHandler) Update(w http.ResponseWriter, r *http.Request) {
+	siteID := middleware.GetSiteID(r.Context())
+
 	var req model.About
 	if err := response.DecodeJSON(r, &req); err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid request body")
@@ -44,7 +48,7 @@ func (h *AboutHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.repo.Upsert(r.Context(), req)
+	result, err := h.repo.Upsert(r.Context(), siteID, req)
 	if err != nil {
 		h.log.Error("updating about",
 			"error", err,

@@ -24,7 +24,9 @@ func NewSkillHandler(repo *repository.SkillRepository, log *slog.Logger) *SkillH
 }
 
 func (h *SkillHandler) List(w http.ResponseWriter, r *http.Request) {
-	skills, err := h.repo.List(r.Context())
+	siteID := middleware.GetSiteID(r.Context())
+
+	skills, err := h.repo.List(r.Context(), siteID)
 	if err != nil {
 		h.log.Error("listing skills",
 			"error", err,
@@ -37,6 +39,8 @@ func (h *SkillHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
+	siteID := middleware.GetSiteID(r.Context())
+
 	var req model.Skill
 	if err := response.DecodeJSON(r, &req); err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid request body")
@@ -54,7 +58,7 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	created, err := h.repo.Create(r.Context(), req)
+	created, err := h.repo.Create(r.Context(), siteID, req)
 	if err != nil {
 		h.log.Error("creating skill",
 			"error", err,
@@ -67,6 +71,8 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
+	siteID := middleware.GetSiteID(r.Context())
+
 	id, err := primitive.ObjectIDFromHex(r.PathValue("id"))
 	if err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid skill ID")
@@ -84,7 +90,7 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, err := h.repo.Update(r.Context(), id, req)
+	updated, err := h.repo.Update(r.Context(), siteID, id, req)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			response.Error(w, http.StatusNotFound, "skill not found")
@@ -101,13 +107,15 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SkillHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	siteID := middleware.GetSiteID(r.Context())
+
 	id, err := primitive.ObjectIDFromHex(r.PathValue("id"))
 	if err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid skill ID")
 		return
 	}
 
-	if err := h.repo.Delete(r.Context(), id); err != nil {
+	if err := h.repo.Delete(r.Context(), siteID, id); err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			response.Error(w, http.StatusNotFound, "skill not found")
 			return

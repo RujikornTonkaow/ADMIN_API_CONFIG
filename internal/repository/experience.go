@@ -21,9 +21,9 @@ func NewExperienceRepository(db *mongo.Database) *ExperienceRepository {
 	return &ExperienceRepository{col: db.Collection("experiences")}
 }
 
-func (r *ExperienceRepository) List(ctx context.Context) ([]model.Experience, error) {
+func (r *ExperienceRepository) List(ctx context.Context, siteID primitive.ObjectID) ([]model.Experience, error) {
 	opts := options.Find().SetSort(bson.D{{Key: "sort_order", Value: 1}})
-	cursor, err := r.col.Find(ctx, bson.M{}, opts)
+	cursor, err := r.col.Find(ctx, bson.M{"site_id": siteID}, opts)
 	if err != nil {
 		return nil, fmt.Errorf("listing experiences: %w", err)
 	}
@@ -39,12 +39,13 @@ func (r *ExperienceRepository) List(ctx context.Context) ([]model.Experience, er
 	return experiences, nil
 }
 
-func (r *ExperienceRepository) Create(ctx context.Context, e model.Experience) (model.Experience, error) {
+func (r *ExperienceRepository) Create(ctx context.Context, siteID primitive.ObjectID, e model.Experience) (model.Experience, error) {
 	now := time.Now()
+	e.SiteID = siteID
 	e.CreatedAt = now
 	e.UpdatedAt = now
 
-	count, err := r.col.CountDocuments(ctx, bson.M{})
+	count, err := r.col.CountDocuments(ctx, bson.M{"site_id": siteID})
 	if err != nil {
 		return e, fmt.Errorf("counting experiences for sort order: %w", err)
 	}
@@ -58,14 +59,14 @@ func (r *ExperienceRepository) Create(ctx context.Context, e model.Experience) (
 	return e, nil
 }
 
-func (r *ExperienceRepository) Update(ctx context.Context, id primitive.ObjectID, e model.Experience) (model.Experience, error) {
+func (r *ExperienceRepository) Update(ctx context.Context, siteID, id primitive.ObjectID, e model.Experience) (model.Experience, error) {
 	e.UpdatedAt = time.Now()
 	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
 
 	var result model.Experience
 	err := r.col.FindOneAndUpdate(
 		ctx,
-		bson.M{"_id": id},
+		bson.M{"_id": id, "site_id": siteID},
 		bson.M{"$set": bson.M{
 			"role":        e.Role,
 			"company":     e.Company,
@@ -82,8 +83,8 @@ func (r *ExperienceRepository) Update(ctx context.Context, id primitive.ObjectID
 	return result, nil
 }
 
-func (r *ExperienceRepository) Delete(ctx context.Context, id primitive.ObjectID) error {
-	res, err := r.col.DeleteOne(ctx, bson.M{"_id": id})
+func (r *ExperienceRepository) Delete(ctx context.Context, siteID, id primitive.ObjectID) error {
+	res, err := r.col.DeleteOne(ctx, bson.M{"_id": id, "site_id": siteID})
 	if err != nil {
 		return fmt.Errorf("deleting experience: %w", err)
 	}
@@ -93,10 +94,10 @@ func (r *ExperienceRepository) Delete(ctx context.Context, id primitive.ObjectID
 	return nil
 }
 
-func (r *ExperienceRepository) Reorder(ctx context.Context, ids []primitive.ObjectID) error {
+func (r *ExperienceRepository) Reorder(ctx context.Context, siteID primitive.ObjectID, ids []primitive.ObjectID) error {
 	for i, id := range ids {
 		_, err := r.col.UpdateOne(ctx,
-			bson.M{"_id": id},
+			bson.M{"_id": id, "site_id": siteID},
 			bson.M{"$set": bson.M{"sort_order": i}},
 		)
 		if err != nil {

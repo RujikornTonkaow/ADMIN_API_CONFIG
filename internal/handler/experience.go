@@ -24,7 +24,9 @@ func NewExperienceHandler(repo *repository.ExperienceRepository, log *slog.Logge
 }
 
 func (h *ExperienceHandler) List(w http.ResponseWriter, r *http.Request) {
-	experiences, err := h.repo.List(r.Context())
+	siteID := middleware.GetSiteID(r.Context())
+
+	experiences, err := h.repo.List(r.Context(), siteID)
 	if err != nil {
 		h.log.Error("listing experiences",
 			"error", err,
@@ -37,6 +39,8 @@ func (h *ExperienceHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ExperienceHandler) Create(w http.ResponseWriter, r *http.Request) {
+	siteID := middleware.GetSiteID(r.Context())
+
 	var req model.Experience
 	if err := response.DecodeJSON(r, &req); err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid request body")
@@ -52,7 +56,7 @@ func (h *ExperienceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		req.Highlights = []string{}
 	}
 
-	created, err := h.repo.Create(r.Context(), req)
+	created, err := h.repo.Create(r.Context(), siteID, req)
 	if err != nil {
 		h.log.Error("creating experience",
 			"error", err,
@@ -65,6 +69,8 @@ func (h *ExperienceHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ExperienceHandler) Update(w http.ResponseWriter, r *http.Request) {
+	siteID := middleware.GetSiteID(r.Context())
+
 	id, err := primitive.ObjectIDFromHex(r.PathValue("id"))
 	if err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid experience ID")
@@ -82,7 +88,7 @@ func (h *ExperienceHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, err := h.repo.Update(r.Context(), id, req)
+	updated, err := h.repo.Update(r.Context(), siteID, id, req)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			response.Error(w, http.StatusNotFound, "experience not found")
@@ -99,13 +105,15 @@ func (h *ExperienceHandler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ExperienceHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	siteID := middleware.GetSiteID(r.Context())
+
 	id, err := primitive.ObjectIDFromHex(r.PathValue("id"))
 	if err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid experience ID")
 		return
 	}
 
-	if err := h.repo.Delete(r.Context(), id); err != nil {
+	if err := h.repo.Delete(r.Context(), siteID, id); err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			response.Error(w, http.StatusNotFound, "experience not found")
 			return
@@ -121,6 +129,8 @@ func (h *ExperienceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ExperienceHandler) Reorder(w http.ResponseWriter, r *http.Request) {
+	siteID := middleware.GetSiteID(r.Context())
+
 	var req model.ReorderRequest
 	if err := response.DecodeJSON(r, &req); err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid request body")
@@ -142,7 +152,7 @@ func (h *ExperienceHandler) Reorder(w http.ResponseWriter, r *http.Request) {
 		objectIDs[i] = oid
 	}
 
-	if err := h.repo.Reorder(r.Context(), objectIDs); err != nil {
+	if err := h.repo.Reorder(r.Context(), siteID, objectIDs); err != nil {
 		h.log.Error("reordering experiences",
 			"error", err,
 			"request_id", middleware.GetRequestID(r.Context()),

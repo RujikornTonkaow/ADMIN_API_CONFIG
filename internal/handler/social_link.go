@@ -24,7 +24,9 @@ func NewSocialLinkHandler(repo *repository.SocialLinkRepository, log *slog.Logge
 }
 
 func (h *SocialLinkHandler) List(w http.ResponseWriter, r *http.Request) {
-	links, err := h.repo.List(r.Context())
+	siteID := middleware.GetSiteID(r.Context())
+
+	links, err := h.repo.List(r.Context(), siteID)
 	if err != nil {
 		h.log.Error("listing social links",
 			"error", err,
@@ -37,6 +39,8 @@ func (h *SocialLinkHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SocialLinkHandler) Create(w http.ResponseWriter, r *http.Request) {
+	siteID := middleware.GetSiteID(r.Context())
+
 	var req model.SocialLink
 	if err := response.DecodeJSON(r, &req); err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid request body")
@@ -48,7 +52,7 @@ func (h *SocialLinkHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	created, err := h.repo.Create(r.Context(), req)
+	created, err := h.repo.Create(r.Context(), siteID, req)
 	if err != nil {
 		h.log.Error("creating social link",
 			"error", err,
@@ -61,6 +65,8 @@ func (h *SocialLinkHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SocialLinkHandler) Update(w http.ResponseWriter, r *http.Request) {
+	siteID := middleware.GetSiteID(r.Context())
+
 	id, err := primitive.ObjectIDFromHex(r.PathValue("id"))
 	if err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid social link ID")
@@ -78,7 +84,7 @@ func (h *SocialLinkHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, err := h.repo.Update(r.Context(), id, req)
+	updated, err := h.repo.Update(r.Context(), siteID, id, req)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			response.Error(w, http.StatusNotFound, "social link not found")
@@ -95,13 +101,15 @@ func (h *SocialLinkHandler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SocialLinkHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	siteID := middleware.GetSiteID(r.Context())
+
 	id, err := primitive.ObjectIDFromHex(r.PathValue("id"))
 	if err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid social link ID")
 		return
 	}
 
-	if err := h.repo.Delete(r.Context(), id); err != nil {
+	if err := h.repo.Delete(r.Context(), siteID, id); err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			response.Error(w, http.StatusNotFound, "social link not found")
 			return
@@ -117,6 +125,8 @@ func (h *SocialLinkHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SocialLinkHandler) Reorder(w http.ResponseWriter, r *http.Request) {
+	siteID := middleware.GetSiteID(r.Context())
+
 	var req model.ReorderRequest
 	if err := response.DecodeJSON(r, &req); err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid request body")
@@ -138,7 +148,7 @@ func (h *SocialLinkHandler) Reorder(w http.ResponseWriter, r *http.Request) {
 		objectIDs[i] = oid
 	}
 
-	if err := h.repo.Reorder(r.Context(), objectIDs); err != nil {
+	if err := h.repo.Reorder(r.Context(), siteID, objectIDs); err != nil {
 		h.log.Error("reordering social links",
 			"error", err,
 			"request_id", middleware.GetRequestID(r.Context()),

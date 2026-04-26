@@ -20,7 +20,9 @@ func NewHeroHandler(repo *repository.HeroRepository, log *slog.Logger) *HeroHand
 }
 
 func (h *HeroHandler) Get(w http.ResponseWriter, r *http.Request) {
-	hero, err := h.repo.Get(r.Context())
+	siteID := middleware.GetSiteID(r.Context())
+
+	hero, err := h.repo.Get(r.Context(), siteID)
 	if err != nil {
 		h.log.Error("getting hero",
 			"error", err,
@@ -33,6 +35,8 @@ func (h *HeroHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HeroHandler) Update(w http.ResponseWriter, r *http.Request) {
+	siteID := middleware.GetSiteID(r.Context())
+
 	var req model.Hero
 	if err := response.DecodeJSON(r, &req); err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid request body")
@@ -44,7 +48,7 @@ func (h *HeroHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.repo.Upsert(r.Context(), req)
+	result, err := h.repo.Upsert(r.Context(), siteID, req)
 	if err != nil {
 		h.log.Error("updating hero",
 			"error", err,

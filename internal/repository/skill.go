@@ -21,9 +21,9 @@ func NewSkillRepository(db *mongo.Database) *SkillRepository {
 	return &SkillRepository{col: db.Collection("skills")}
 }
 
-func (r *SkillRepository) List(ctx context.Context) ([]model.Skill, error) {
+func (r *SkillRepository) List(ctx context.Context, siteID primitive.ObjectID) ([]model.Skill, error) {
 	opts := options.Find().SetSort(bson.D{{Key: "sort_order", Value: 1}})
-	cursor, err := r.col.Find(ctx, bson.M{}, opts)
+	cursor, err := r.col.Find(ctx, bson.M{"site_id": siteID}, opts)
 	if err != nil {
 		return nil, fmt.Errorf("listing skills: %w", err)
 	}
@@ -39,12 +39,13 @@ func (r *SkillRepository) List(ctx context.Context) ([]model.Skill, error) {
 	return skills, nil
 }
 
-func (r *SkillRepository) Create(ctx context.Context, s model.Skill) (model.Skill, error) {
+func (r *SkillRepository) Create(ctx context.Context, siteID primitive.ObjectID, s model.Skill) (model.Skill, error) {
 	now := time.Now()
+	s.SiteID = siteID
 	s.CreatedAt = now
 	s.UpdatedAt = now
 
-	count, err := r.col.CountDocuments(ctx, bson.M{})
+	count, err := r.col.CountDocuments(ctx, bson.M{"site_id": siteID})
 	if err != nil {
 		return s, fmt.Errorf("counting skills for sort order: %w", err)
 	}
@@ -58,14 +59,14 @@ func (r *SkillRepository) Create(ctx context.Context, s model.Skill) (model.Skil
 	return s, nil
 }
 
-func (r *SkillRepository) Update(ctx context.Context, id primitive.ObjectID, s model.Skill) (model.Skill, error) {
+func (r *SkillRepository) Update(ctx context.Context, siteID, id primitive.ObjectID, s model.Skill) (model.Skill, error) {
 	s.UpdatedAt = time.Now()
 	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
 
 	var result model.Skill
 	err := r.col.FindOneAndUpdate(
 		ctx,
-		bson.M{"_id": id},
+		bson.M{"_id": id, "site_id": siteID},
 		bson.M{"$set": bson.M{
 			"name":       s.Name,
 			"icon":       s.Icon,
@@ -80,8 +81,8 @@ func (r *SkillRepository) Update(ctx context.Context, id primitive.ObjectID, s m
 	return result, nil
 }
 
-func (r *SkillRepository) Delete(ctx context.Context, id primitive.ObjectID) error {
-	res, err := r.col.DeleteOne(ctx, bson.M{"_id": id})
+func (r *SkillRepository) Delete(ctx context.Context, siteID, id primitive.ObjectID) error {
+	res, err := r.col.DeleteOne(ctx, bson.M{"_id": id, "site_id": siteID})
 	if err != nil {
 		return fmt.Errorf("deleting skill: %w", err)
 	}

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
@@ -20,16 +21,17 @@ func NewHeroRepository(db *mongo.Database) *HeroRepository {
 	return &HeroRepository{col: db.Collection("hero")}
 }
 
-func (r *HeroRepository) Get(ctx context.Context) (model.Hero, error) {
+func (r *HeroRepository) Get(ctx context.Context, siteID primitive.ObjectID) (model.Hero, error) {
 	var hero model.Hero
-	err := r.col.FindOne(ctx, bson.M{}).Decode(&hero)
+	err := r.col.FindOne(ctx, bson.M{"site_id": siteID}).Decode(&hero)
 	if err != nil {
 		return hero, fmt.Errorf("finding hero: %w", err)
 	}
 	return hero, nil
 }
 
-func (r *HeroRepository) Upsert(ctx context.Context, h model.Hero) (model.Hero, error) {
+func (r *HeroRepository) Upsert(ctx context.Context, siteID primitive.ObjectID, h model.Hero) (model.Hero, error) {
+	h.SiteID = siteID
 	h.UpdatedAt = time.Now()
 	opts := options.FindOneAndUpdate().
 		SetUpsert(true).
@@ -38,7 +40,7 @@ func (r *HeroRepository) Upsert(ctx context.Context, h model.Hero) (model.Hero, 
 	var result model.Hero
 	err := r.col.FindOneAndUpdate(
 		ctx,
-		bson.M{},
+		bson.M{"site_id": siteID},
 		bson.M{"$set": h},
 		opts,
 	).Decode(&result)

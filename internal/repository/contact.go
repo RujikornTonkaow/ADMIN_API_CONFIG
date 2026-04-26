@@ -21,9 +21,9 @@ func NewContactRepository(db *mongo.Database) *ContactRepository {
 	return &ContactRepository{col: db.Collection("contact_messages")}
 }
 
-func (r *ContactRepository) List(ctx context.Context) ([]model.ContactMessage, error) {
+func (r *ContactRepository) List(ctx context.Context, siteID primitive.ObjectID) ([]model.ContactMessage, error) {
 	opts := options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}})
-	cursor, err := r.col.Find(ctx, bson.M{}, opts)
+	cursor, err := r.col.Find(ctx, bson.M{"site_id": siteID}, opts)
 	if err != nil {
 		return nil, fmt.Errorf("listing contact messages: %w", err)
 	}
@@ -39,16 +39,17 @@ func (r *ContactRepository) List(ctx context.Context) ([]model.ContactMessage, e
 	return messages, nil
 }
 
-func (r *ContactRepository) GetByID(ctx context.Context, id primitive.ObjectID) (model.ContactMessage, error) {
+func (r *ContactRepository) GetByID(ctx context.Context, siteID, id primitive.ObjectID) (model.ContactMessage, error) {
 	var msg model.ContactMessage
-	err := r.col.FindOne(ctx, bson.M{"_id": id}).Decode(&msg)
+	err := r.col.FindOne(ctx, bson.M{"_id": id, "site_id": siteID}).Decode(&msg)
 	if err != nil {
 		return msg, fmt.Errorf("finding contact message: %w", err)
 	}
 	return msg, nil
 }
 
-func (r *ContactRepository) Create(ctx context.Context, c model.ContactMessage) (model.ContactMessage, error) {
+func (r *ContactRepository) Create(ctx context.Context, siteID primitive.ObjectID, c model.ContactMessage) (model.ContactMessage, error) {
+	c.SiteID = siteID
 	c.CreatedAt = time.Now()
 	c.IsRead = false
 
@@ -60,9 +61,9 @@ func (r *ContactRepository) Create(ctx context.Context, c model.ContactMessage) 
 	return c, nil
 }
 
-func (r *ContactRepository) MarkAsRead(ctx context.Context, id primitive.ObjectID) error {
+func (r *ContactRepository) MarkAsRead(ctx context.Context, siteID, id primitive.ObjectID) error {
 	_, err := r.col.UpdateOne(ctx,
-		bson.M{"_id": id},
+		bson.M{"_id": id, "site_id": siteID},
 		bson.M{"$set": bson.M{"is_read": true}},
 	)
 	if err != nil {
@@ -71,8 +72,8 @@ func (r *ContactRepository) MarkAsRead(ctx context.Context, id primitive.ObjectI
 	return nil
 }
 
-func (r *ContactRepository) Delete(ctx context.Context, id primitive.ObjectID) error {
-	res, err := r.col.DeleteOne(ctx, bson.M{"_id": id})
+func (r *ContactRepository) Delete(ctx context.Context, siteID, id primitive.ObjectID) error {
+	res, err := r.col.DeleteOne(ctx, bson.M{"_id": id, "site_id": siteID})
 	if err != nil {
 		return fmt.Errorf("deleting contact message: %w", err)
 	}
@@ -82,8 +83,8 @@ func (r *ContactRepository) Delete(ctx context.Context, id primitive.ObjectID) e
 	return nil
 }
 
-func (r *ContactRepository) CountUnread(ctx context.Context) (int64, error) {
-	count, err := r.col.CountDocuments(ctx, bson.M{"is_read": false})
+func (r *ContactRepository) CountUnread(ctx context.Context, siteID primitive.ObjectID) (int64, error) {
+	count, err := r.col.CountDocuments(ctx, bson.M{"site_id": siteID, "is_read": false})
 	if err != nil {
 		return 0, fmt.Errorf("counting unread messages: %w", err)
 	}

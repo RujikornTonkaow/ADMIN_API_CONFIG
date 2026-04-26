@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
@@ -20,16 +21,17 @@ func NewAboutRepository(db *mongo.Database) *AboutRepository {
 	return &AboutRepository{col: db.Collection("about")}
 }
 
-func (r *AboutRepository) Get(ctx context.Context) (model.About, error) {
+func (r *AboutRepository) Get(ctx context.Context, siteID primitive.ObjectID) (model.About, error) {
 	var about model.About
-	err := r.col.FindOne(ctx, bson.M{}).Decode(&about)
+	err := r.col.FindOne(ctx, bson.M{"site_id": siteID}).Decode(&about)
 	if err != nil {
 		return about, fmt.Errorf("finding about: %w", err)
 	}
 	return about, nil
 }
 
-func (r *AboutRepository) Upsert(ctx context.Context, a model.About) (model.About, error) {
+func (r *AboutRepository) Upsert(ctx context.Context, siteID primitive.ObjectID, a model.About) (model.About, error) {
+	a.SiteID = siteID
 	a.UpdatedAt = time.Now()
 	opts := options.FindOneAndUpdate().
 		SetUpsert(true).
@@ -38,7 +40,7 @@ func (r *AboutRepository) Upsert(ctx context.Context, a model.About) (model.Abou
 	var result model.About
 	err := r.col.FindOneAndUpdate(
 		ctx,
-		bson.M{},
+		bson.M{"site_id": siteID},
 		bson.M{"$set": a},
 		opts,
 	).Decode(&result)

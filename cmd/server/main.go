@@ -12,6 +12,7 @@ import (
 
 	"portfolio-admin-api/internal/config"
 	"portfolio-admin-api/internal/database"
+	"portfolio-admin-api/internal/middleware"
 	"portfolio-admin-api/internal/repository"
 	"portfolio-admin-api/internal/router"
 )
@@ -35,10 +36,28 @@ func main() {
 	}
 	defer disconnect()
 
+	if cfg.ResetDatabaseOnStart {
+		log.Warn("resetting database on start", "database", cfg.MongoDB)
+		if err := db.Drop(ctx); err != nil {
+			log.Error("failed to reset database", "error", err)
+			os.Exit(1)
+		}
+	}
+
 	adminUserRepo := repository.NewAdminUserRepository(db)
+	siteRepo := repository.NewSiteRepository(db)
+	siteMemberRepo := repository.NewSiteMemberRepository(db)
 
 	if err := adminUserRepo.EnsureIndexes(ctx); err != nil {
-		log.Error("failed to ensure indexes", "error", err)
+		log.Error("failed to ensure admin_users indexes", "error", err)
+		os.Exit(1)
+	}
+	if err := siteRepo.EnsureIndexes(ctx); err != nil {
+		log.Error("failed to ensure sites indexes", "error", err)
+		os.Exit(1)
+	}
+	if err := siteMemberRepo.EnsureIndexes(ctx); err != nil {
+		log.Error("failed to ensure site_members indexes", "error", err)
 		os.Exit(1)
 	}
 
@@ -46,6 +65,12 @@ func main() {
 		log.Error("failed to seed database", "error", err)
 		os.Exit(1)
 	}
+
+	appCtx, appCancel := context.WithCancel(context.Background())
+	defer appCancel()
+
+	domainCache := middleware.NewDomainCache(siteRepo, cfg.AllowedOrigins, log)
+	domainCache.StartAutoRefresh(appCtx, 5*time.Minute)
 
 	siteSettingsRepo := repository.NewSiteSettingsRepository(db)
 	heroRepo := repository.NewHeroRepository(db)
@@ -57,11 +82,12 @@ func main() {
 	contactRepo := repository.NewContactRepository(db)
 
 	handler := router.New(&router.Config{
-		JWTSecret:        cfg.JWTSecret,
-		UploadDir:        cfg.UploadDir,
-		MaxUploadMB:      cfg.MaxUploadSizeMB,
-		AllowedOrigins:   cfg.AllowedOrigins,
-		Log:              log,
+		JWTSecret:   cfg.JWTSecret,
+		UploadDir:   cfg.UploadDir,
+		MaxUploadMB: cfg.MaxUploadSizeMB,
+		DomainCache: domainCache,
+		Log:         log,
+		DB:          db,
 		SiteSettingsRepo: siteSettingsRepo,
 		HeroRepo:         heroRepo,
 		AboutRepo:        aboutRepo,
@@ -71,6 +97,8 @@ func main() {
 		SocialLinkRepo:   socialLinkRepo,
 		ContactRepo:      contactRepo,
 		AdminUserRepo:    adminUserRepo,
+		SiteRepo:         siteRepo,
+		SiteMemberRepo:   siteMemberRepo,
 	})
 
 	srv := &http.Server{

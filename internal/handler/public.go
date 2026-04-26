@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 
+	"go.mongodb.org/mongo-driver/bson/primitive"
+
 	"portfolio-admin-api/internal/middleware"
 	"portfolio-admin-api/internal/model"
 	"portfolio-admin-api/internal/repository"
@@ -29,6 +31,7 @@ type PublicHandler struct {
 	experiences  *repository.ExperienceRepository
 	socialLinks  *repository.SocialLinkRepository
 	contacts     *repository.ContactRepository
+	sites        *repository.SiteRepository
 	log          *slog.Logger
 }
 
@@ -41,6 +44,7 @@ func NewPublicHandler(
 	experiences *repository.ExperienceRepository,
 	socialLinks *repository.SocialLinkRepository,
 	contacts *repository.ContactRepository,
+	sites *repository.SiteRepository,
 	log *slog.Logger,
 ) *PublicHandler {
 	return &PublicHandler{
@@ -52,6 +56,7 @@ func NewPublicHandler(
 		experiences:  experiences,
 		socialLinks:  socialLinks,
 		contacts:     contacts,
+		sites:        sites,
 		log:          log,
 	}
 }
@@ -60,40 +65,47 @@ func (h *PublicHandler) GetPortfolio(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	reqID := middleware.GetRequestID(ctx)
 
-	settings, err := h.siteSettings.Get(ctx)
+	siteIDHex := r.PathValue("siteId")
+	siteID, err := primitive.ObjectIDFromHex(siteIDHex)
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid site ID")
+		return
+	}
+
+	settings, err := h.siteSettings.Get(ctx, siteID)
 	if err != nil {
 		h.log.Error("fetching site settings for portfolio", "error", err, "request_id", reqID)
 	}
 
-	heroData, err := h.hero.Get(ctx)
+	heroData, err := h.hero.Get(ctx, siteID)
 	if err != nil {
 		h.log.Error("fetching hero for portfolio", "error", err, "request_id", reqID)
 	}
 
-	aboutData, err := h.about.Get(ctx)
+	aboutData, err := h.about.Get(ctx, siteID)
 	if err != nil {
 		h.log.Error("fetching about for portfolio", "error", err, "request_id", reqID)
 	}
 
-	skills, err := h.skills.List(ctx)
+	skills, err := h.skills.List(ctx, siteID)
 	if err != nil {
 		h.log.Error("fetching skills for portfolio", "error", err, "request_id", reqID)
 		skills = []model.Skill{}
 	}
 
-	projects, err := h.projects.List(ctx)
+	projects, err := h.projects.List(ctx, siteID)
 	if err != nil {
 		h.log.Error("fetching projects for portfolio", "error", err, "request_id", reqID)
 		projects = []model.Project{}
 	}
 
-	experiences, err := h.experiences.List(ctx)
+	experiences, err := h.experiences.List(ctx, siteID)
 	if err != nil {
 		h.log.Error("fetching experiences for portfolio", "error", err, "request_id", reqID)
 		experiences = []model.Experience{}
 	}
 
-	socialLinks, err := h.socialLinks.List(ctx)
+	socialLinks, err := h.socialLinks.List(ctx, siteID)
 	if err != nil {
 		h.log.Error("fetching social links for portfolio", "error", err, "request_id", reqID)
 		socialLinks = []model.SocialLink{}
@@ -123,6 +135,13 @@ func (h *PublicHandler) GetPortfolio(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PublicHandler) SubmitContact(w http.ResponseWriter, r *http.Request) {
+	siteIDHex := r.PathValue("siteId")
+	siteID, err := primitive.ObjectIDFromHex(siteIDHex)
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid site ID")
+		return
+	}
+
 	var req model.ContactRequest
 	if err := response.DecodeJSON(r, &req); err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid request body")
@@ -146,7 +165,7 @@ func (h *PublicHandler) SubmitContact(w http.ResponseWriter, r *http.Request) {
 		Message: req.Message,
 	}
 
-	if _, err := h.contacts.Create(r.Context(), msg); err != nil {
+	if _, err := h.contacts.Create(r.Context(), siteID, msg); err != nil {
 		h.log.Error("creating contact message",
 			"error", err,
 			"request_id", middleware.GetRequestID(r.Context()),
@@ -156,4 +175,20 @@ func (h *PublicHandler) SubmitContact(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response.JSON(w, http.StatusCreated, map[string]string{"message": "Contact message sent successfully"})
+}
+
+func (h *PublicHandler) ResolveDomain(w http.ResponseWriter, r *http.Request) {
+	host := r.URL.Query().Get("host")
+	if host == "" {
+		response.Error(w, http.StatusBadRequest, "host query parameter is required")
+		return
+	}
+
+	site, err := h.sites.FindByDomain(r.Context(), host)
+	if err != nil {
+		response.Error(w, http.StatusNotFound, "no site found for this domain")
+		return
+	}
+
+	response.JSON(w, http.StatusOK, site)
 }

@@ -2,6 +2,36 @@
 
 เอกสารนี้อธิบาย API Endpoints ทั้งหมดอย่างละเอียด รวมถึง Request/Response format, Authentication, และตัวอย่างการใช้งาน
 
+**การเป็นสมาชิกไซต์ (multi-site):** การอนุญาตแบ่งเป็น **สองระดับ** — **(1) Global RBAC** จาก JWT (`super_admin`, `admin`, `editor`, `viewer`) และ **(2) Site access** จาก collection `site_members` ต่อแต่ละ `siteId` ผู้ใช้ `super_admin` ข้ามการตรวจสอบ site access และเห็นทุก site ส่วน role อื่นต้องมี record ใน `site_members`
+
+---
+
+## Implementation Decision — Multi-site Cutover
+
+โปรเจกต์ backend ต้องใช้ **site-scoped routes แบบใหม่เท่านั้น** สำหรับ Portfolio CRUD:
+
+```text
+/api/v1/admin/sites/{siteId}/portfolio/...
+```
+
+ไม่ต้องเก็บ legacy routes เดิม เช่น:
+
+```text
+/api/v1/admin/projects
+/api/v1/admin/skills
+/api/v1/admin/hero
+/api/v1/admin/upload
+```
+
+ถ้ามี legacy routes เหลือใน router/handler/test ให้ลบออกหรือแก้ให้ test ใช้ route ใหม่ทั้งหมด เพื่อบังคับให้ Admin Dashboard ส่ง `siteId` เสมอ
+
+ข้อมูล portfolio เดิมใน MongoDB ให้ถือว่าไม่ต้อง migrate: ให้ตั้ง `RESET_DATABASE_ON_START=true` ตอนรัน server เพื่อ drop database แล้ว seed ใหม่ สร้าง `sites`, `site_members` และ portfolio documents ที่มี `site_id` ครบ
+
+เอกสารที่ฝั่ง backend ควรอ่านคู่กับไฟล์นี้:
+
+- `Website_Config/GUIDE/07-MULTI-SITE-ARCHITECTURE.md`
+- `Website_Config/GUIDE/08-CORS-AND-LOCAL-DEV.md`
+
 ---
 
 ## Base URL
@@ -55,17 +85,42 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 | สัญลักษณ์ | Role ขั้นต่ำ | ใครเข้าได้บ้าง |
 |-----------|-------------|---------------|
 | Public | ไม่ต้อง auth | ทุกคน |
-| visitor+ | visitor | visitor, user_account, admin |
-| user_account+ | user_account | user_account, admin |
-| admin | admin | admin เท่านั้น |
+| viewer+ | viewer | viewer, editor, admin, super_admin |
+| editor+ | editor | editor, admin, super_admin |
+| admin+ | admin | admin, super_admin |
+| super_admin | super_admin | super_admin เท่านั้น |
+
+### Site access (ใช้คู่กับ JWT สำหรับ route ภายใต้ `/api/v1/admin/sites/{siteId}/...`)
+
+`site_members` เป็น access list ว่า user เข้าถึง site ไหนได้บ้าง ไม่ได้ใช้เป็น role ต่อ site แล้ว
+
+- `super_admin` bypass site access และเห็นทุก site
+- `admin`, `editor`, `viewer` ต้องมี record ใน `site_members` ของ site นั้น
+- ความสามารถอ่าน/เขียนตัดสินจาก global role: `editor+` แก้ content, `viewer` เห็นเฉพาะ messages
 
 ---
 
 ## 1. Public API (ไม่ต้อง Auth)
 
-### GET /api/v1/portfolio
+### GET /api/v1/public/sites/by-domain
 
-ดึงข้อมูล portfolio ทั้งหมดสำหรับแสดงในหน้าเว็บ
+แปลง hostname เป็น site (ใช้ตอน frontend รู้แค่ domain ยังไม่รู้ `siteId`)
+
+**Auth:** ไม่ต้อง
+
+**Query:** `host` (required) — hostname ที่ต้องการ resolve (เช่น `www.example.com`)
+
+**Response:** `200 OK` — object ของ site ใน `data`
+
+**Errors:**
+- `400` — ไม่ส่ง `host` หรือค่าว่าง
+- `404` — ไม่พบไซต์ที่ผูก domain นี้
+
+---
+
+### GET /api/v1/public/sites/{siteId}/portfolio
+
+ดึงข้อมูล portfolio ทั้งหมดของไซต์ที่ระบุ สำหรับแสดงในหน้าเว็บ
 
 **Auth:** ไม่ต้อง
 
@@ -167,9 +222,9 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ---
 
-### POST /api/v1/contact
+### POST /api/v1/public/sites/{siteId}/portfolio/contacts
 
-ส่งข้อความ contact จากผู้เยี่ยมชม
+ส่งข้อความ contact จากผู้เยี่ยมชม (ผูกกับไซต์ที่ระบุ)
 
 **Auth:** ไม่ต้อง
 
@@ -241,7 +296,7 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ดูข้อมูล user ปัจจุบัน (จาก JWT token)
 
-**Auth:** visitor+
+**Auth:** viewer+
 
 **Response:** `200 OK`
 ```json
@@ -258,7 +313,11 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ---
 
-## 3. User Management API (admin only)
+## 3. User Management API (admin+)
+
+- `super_admin` จัดการผู้ใช้ได้ทั้งหมด และสร้าง `super_admin` คนอื่นได้
+- `admin` จัดการได้เฉพาะ user ที่ share site access กัน และสร้างได้เฉพาะ `admin`, `editor`, `viewer`
+- `editor` และ `viewer` ไม่มีสิทธิ์เข้า User Management
 
 ### GET /api/v1/admin/users
 
@@ -280,7 +339,7 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
     {
       "id": "...",
       "username": "editor",
-      "role": "user_account",
+      "role": "editor",
       "created_at": "...",
       "updated_at": "..."
     }
@@ -301,14 +360,14 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 {
   "username": "editor",
   "password": "securepassword",
-  "role": "user_account"
+  "role": "editor"
 }
 ```
 
 **Validation:**
 - `username` — ต้องไม่ว่าง, ต้องไม่ซ้ำ (unique index)
 - `password` — ต้องไม่ว่าง, ขั้นต่ำ 8 ตัวอักษร
-- `role` — ต้องเป็น `admin`, `user_account`, หรือ `visitor`
+- `role` — ต้องเป็น `super_admin`, `admin`, `editor`, หรือ `viewer`
 
 **Response:** `201 Created` — return user object (password ถูกซ่อนจาก JSON)
 
@@ -342,13 +401,13 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 ```json
 {
   "username": "new_username",
-  "role": "user_account"
+  "role": "editor"
 }
 ```
 
 **Validation:**
 - `username` และ `role` ต้องไม่ว่าง
-- `role` ต้องเป็น `admin`, `user_account`, หรือ `visitor`
+- `role` ต้องเป็น `super_admin`, `admin`, `editor`, หรือ `viewer`
 
 **Safety Rules:**
 - ไม่สามารถ downgrade role ของตัวเอง (ถ้าเป็น admin แล้วเปลี่ยนเป็น role อื่น)
@@ -412,13 +471,177 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ---
 
-## 4. Site Settings API (user_account+)
+## 4. Site Management API
 
-### GET /api/v1/admin/site-settings
+```
+GET    /api/v1/admin/sites              — ลิสต์ไซต์ที่ user เห็นได้ (viewer+)
+POST   /api/v1/admin/sites              — สร้างไซต์ใหม่ (super_admin เท่านั้น)
+GET    /api/v1/admin/sites/{siteId}     — ดูรายละเอียดไซต์ (site viewer+)
+PUT    /api/v1/admin/sites/{siteId}     — แก้ไขไซต์ (site owner)
+DELETE /api/v1/admin/sites/{siteId}     — ลบไซต์ (site owner)
+```
 
-ดู site settings ปัจจุบัน
+### GET /api/v1/admin/sites
 
-**Auth:** user_account+
+ลิสต์ไซต์ทั้งหมดที่ผู้ใช้ปัจจุบันเป็นสมาชิก
+
+**Auth:** viewer+
+
+**Response:** `200 OK` — array ของ site ใน `data`
+
+---
+
+### POST /api/v1/admin/sites
+
+สร้างไซต์ใหม่ ผู้สร้างจะถูกเพิ่มเป็น `owner` ใน `site_members` อัตโนมัติ
+
+**Auth:** super_admin
+
+**Request Body:**
+```json
+{
+  "name": "My Portfolio",
+  "slug": "my-portfolio",
+  "type": "portfolio",
+  "domains": ["example.com", "www.example.com"]
+}
+```
+
+- `type` — `portfolio` | `shop` | `finance`
+- `domains` — array ของ hostname (ว่างได้ตาม validation ของ API)
+
+**Response:** `201 Created` — object ของ site ใน `data`
+
+**Errors:**
+- `400` — validation ไม่ผ่าน
+
+---
+
+### GET /api/v1/admin/sites/{siteId}
+
+ดูรายละเอียดไซต์
+
+**Auth:** site viewer+ (สมาชิกไซต์ role ≥ `viewer`; หรือ global `admin`)
+
+**Errors:**
+- `400` — `siteId` ไม่ใช่ ObjectID ที่ถูกต้อง
+- `403` — ไม่ใช่สมาชิกไซต์ (ยกเว้น `admin`)
+- `404` — ไม่พบไซต์
+
+---
+
+### PUT /api/v1/admin/sites/{siteId}
+
+แก้ไขข้อมูลไซต์
+
+**Auth:** site owner (หรือ global `admin`)
+
+**Request Body:**
+```json
+{
+  "name": "Updated Name",
+  "slug": "updated-slug",
+  "domains": ["new.example.com"]
+}
+```
+
+**Response:** `200 OK`
+
+**Errors:**
+- `400` / `403` / `404` — ตามกรณี
+
+---
+
+### DELETE /api/v1/admin/sites/{siteId}
+
+ลบไซต์
+
+**Auth:** site owner (หรือ global `admin`)
+
+**Response:** `204 No Content`
+
+**Errors:**
+- `400` / `403` / `404` — ตามกรณี
+
+---
+
+## 5. Site Members API
+
+```
+GET    /api/v1/admin/sites/{siteId}/members                    — ลิสต์สมาชิก (site viewer+)
+POST   /api/v1/admin/sites/{siteId}/members                    — เพิ่มสมาชิก (site owner)
+PUT    /api/v1/admin/sites/{siteId}/members/{memberId}       — เปลี่ยน role (site owner)
+DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสมาชิก (site owner)
+```
+
+### GET /api/v1/admin/sites/{siteId}/members
+
+ลิสต์สมาชิกทั้งหมดของไซต์
+
+**Auth:** site viewer+ (หรือ global `admin`)
+
+**Response:** `200 OK`
+
+---
+
+### POST /api/v1/admin/sites/{siteId}/members
+
+เพิ่มสมาชิกให้ไซต์
+
+**Auth:** site owner (หรือ global `admin`)
+
+**Request Body:**
+```json
+{
+  "user_id": "6789abcdef0123456789abcd",
+  "role": "editor"
+}
+```
+
+- `role` — `owner` | `editor` | `viewer`
+
+**Response:** `201 Created`
+
+**Errors:**
+- `400` — validation ไม่ผ่าน
+- `403` / `404` — ตามกรณี
+
+---
+
+### PUT /api/v1/admin/sites/{siteId}/members/{memberId}
+
+เปลี่ยน role ของสมาชิก
+
+**Auth:** site owner (หรือ global `admin`)
+
+**Request Body:**
+```json
+{
+  "role": "viewer"
+}
+```
+
+**Response:** `200 OK`
+
+---
+
+### DELETE /api/v1/admin/sites/{siteId}/members/{memberId}
+
+ลบสมาชิกออกจากไซต์
+
+**Auth:** site owner (หรือ global `admin`)
+
+**Response:** `204 No Content`
+
+---
+
+## 6. Site Settings API
+
+### GET /api/v1/admin/sites/{siteId}/portfolio/site-settings
+
+ดู site settings ของไซต์ที่ระบุ
+
+**Auth:** site viewer+ (หรือ global `admin`)
 
 **Response:** `200 OK`
 ```json
@@ -438,11 +661,11 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ---
 
-### PUT /api/v1/admin/site-settings
+### PUT /api/v1/admin/sites/{siteId}/portfolio/site-settings
 
 แก้ไข site settings
 
-**Auth:** user_account+
+**Auth:** site editor+ (หรือ global `admin`)
 
 **Request Body:**
 ```json
@@ -463,21 +686,21 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ---
 
-## 5. Hero Section API (user_account+)
+## 7. Hero Section API
 
-### GET /api/v1/admin/hero
+### GET /api/v1/admin/sites/{siteId}/portfolio/hero
 
 ดูข้อมูล hero section
 
-**Auth:** user_account+
+**Auth:** site viewer+ (หรือ global `admin`)
 
 ---
 
-### PUT /api/v1/admin/hero
+### PUT /api/v1/admin/sites/{siteId}/portfolio/hero
 
 แก้ไข hero section
 
-**Auth:** user_account+
+**Auth:** site editor+ (หรือ global `admin`)
 
 **Request Body:**
 ```json
@@ -497,21 +720,21 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ---
 
-## 6. About Section API (user_account+)
+## 8. About Section API
 
-### GET /api/v1/admin/about
+### GET /api/v1/admin/sites/{siteId}/portfolio/about
 
 ดูข้อมูล about section
 
-**Auth:** user_account+
+**Auth:** site viewer+ (หรือ global `admin`)
 
 ---
 
-### PUT /api/v1/admin/about
+### PUT /api/v1/admin/sites/{siteId}/portfolio/about
 
 แก้ไข about section
 
-**Auth:** user_account+
+**Auth:** site editor+ (หรือ global `admin`)
 
 **Request Body:**
 ```json
@@ -534,21 +757,21 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ---
 
-## 7. Skills API (user_account+)
+## 9. Skills API
 
-### GET /api/v1/admin/skills
+### GET /api/v1/admin/sites/{siteId}/portfolio/skills
 
 ดูรายการ skills ทั้งหมด (เรียงตาม sort_order)
 
-**Auth:** user_account+
+**Auth:** site viewer+ (หรือ global `admin`)
 
 ---
 
-### POST /api/v1/admin/skills
+### POST /api/v1/admin/sites/{siteId}/portfolio/skills
 
 สร้าง skill ใหม่
 
-**Auth:** user_account+
+**Auth:** site editor+ (หรือ global `admin`)
 
 **Request Body:**
 ```json
@@ -570,11 +793,11 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ---
 
-### PUT /api/v1/admin/skills/{id}
+### PUT /api/v1/admin/sites/{siteId}/portfolio/skills/{id}
 
 แก้ไข skill
 
-**Auth:** user_account+
+**Auth:** site editor+ (หรือ global `admin`)
 
 **Validation:**
 - `name`, `icon`, `category` ต้องไม่ว่าง
@@ -586,11 +809,11 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ---
 
-### DELETE /api/v1/admin/skills/{id}
+### DELETE /api/v1/admin/sites/{siteId}/portfolio/skills/{id}
 
 ลบ skill
 
-**Auth:** user_account+
+**Auth:** site editor+ (หรือ global `admin`)
 
 **Response:** `204 No Content` (ไม่มี body)
 
@@ -599,21 +822,21 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ---
 
-## 8. Projects API (user_account+)
+## 10. Projects API
 
-### GET /api/v1/admin/projects
+### GET /api/v1/admin/sites/{siteId}/portfolio/projects
 
 ดูรายการ projects ทั้งหมด (เรียงตาม sort_order)
 
-**Auth:** user_account+
+**Auth:** site viewer+ (หรือ global `admin`)
 
 ---
 
-### POST /api/v1/admin/projects
+### POST /api/v1/admin/sites/{siteId}/portfolio/projects
 
 สร้าง project ใหม่
 
-**Auth:** user_account+
+**Auth:** site editor+ (หรือ global `admin`)
 
 **Request Body:**
 ```json
@@ -636,11 +859,11 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ---
 
-### PUT /api/v1/admin/projects/{id}
+### PUT /api/v1/admin/sites/{siteId}/portfolio/projects/{id}
 
 แก้ไข project
 
-**Auth:** user_account+
+**Auth:** site editor+ (หรือ global `admin`)
 
 **Validation:**
 - `title` และ `description` ต้องไม่ว่าง
@@ -652,11 +875,11 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ---
 
-### DELETE /api/v1/admin/projects/{id}
+### DELETE /api/v1/admin/sites/{siteId}/portfolio/projects/{id}
 
 ลบ project
 
-**Auth:** user_account+
+**Auth:** site editor+ (หรือ global `admin`)
 
 **Response:** `204 No Content` (ไม่มี body)
 
@@ -665,11 +888,11 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ---
 
-### PUT /api/v1/admin/projects/reorder
+### PUT /api/v1/admin/sites/{siteId}/portfolio/projects/reorder
 
 เรียงลำดับ projects ใหม่
 
-**Auth:** user_account+
+**Auth:** site editor+ (หรือ global `admin`)
 
 **Request Body:**
 ```json
@@ -699,21 +922,21 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ---
 
-## 9. Experiences API (user_account+)
+## 11. Experiences API
 
-### GET /api/v1/admin/experiences
+### GET /api/v1/admin/sites/{siteId}/portfolio/experiences
 
 ดูรายการ experiences ทั้งหมด (เรียงตาม sort_order)
 
-**Auth:** user_account+
+**Auth:** site viewer+ (หรือ global `admin`)
 
 ---
 
-### POST /api/v1/admin/experiences
+### POST /api/v1/admin/sites/{siteId}/portfolio/experiences
 
 สร้าง experience ใหม่
 
-**Auth:** user_account+
+**Auth:** site editor+ (หรือ global `admin`)
 
 **Request Body:**
 ```json
@@ -738,11 +961,11 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ---
 
-### PUT /api/v1/admin/experiences/{id}
+### PUT /api/v1/admin/sites/{siteId}/portfolio/experiences/{id}
 
 แก้ไข experience
 
-**Auth:** user_account+
+**Auth:** site editor+ (หรือ global `admin`)
 
 **Validation:**
 - `role`, `company`, `period` ต้องไม่ว่าง
@@ -754,11 +977,11 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ---
 
-### DELETE /api/v1/admin/experiences/{id}
+### DELETE /api/v1/admin/sites/{siteId}/portfolio/experiences/{id}
 
 ลบ experience
 
-**Auth:** user_account+
+**Auth:** site editor+ (หรือ global `admin`)
 
 **Response:** `204 No Content` (ไม่มี body)
 
@@ -767,11 +990,11 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ---
 
-### PUT /api/v1/admin/experiences/reorder
+### PUT /api/v1/admin/sites/{siteId}/portfolio/experiences/reorder
 
 เรียงลำดับ experiences ใหม่
 
-**Auth:** user_account+
+**Auth:** site editor+ (หรือ global `admin`)
 
 **Request Body:**
 ```json
@@ -795,21 +1018,21 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ---
 
-## 10. Social Links API (user_account+)
+## 12. Social Links API
 
-### GET /api/v1/admin/social-links
+### GET /api/v1/admin/sites/{siteId}/portfolio/social-links
 
 ดูรายการ social links ทั้งหมด (เรียงตาม sort_order)
 
-**Auth:** user_account+
+**Auth:** site viewer+ (หรือ global `admin`)
 
 ---
 
-### POST /api/v1/admin/social-links
+### POST /api/v1/admin/sites/{siteId}/portfolio/social-links
 
 สร้าง social link ใหม่
 
-**Auth:** user_account+
+**Auth:** site editor+ (หรือ global `admin`)
 
 **Request Body:**
 ```json
@@ -828,11 +1051,11 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ---
 
-### PUT /api/v1/admin/social-links/{id}
+### PUT /api/v1/admin/sites/{siteId}/portfolio/social-links/{id}
 
 แก้ไข social link
 
-**Auth:** user_account+
+**Auth:** site editor+ (หรือ global `admin`)
 
 **Validation:**
 - `name`, `url`, `icon` ต้องไม่ว่าง
@@ -844,11 +1067,11 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ---
 
-### DELETE /api/v1/admin/social-links/{id}
+### DELETE /api/v1/admin/sites/{siteId}/portfolio/social-links/{id}
 
 ลบ social link
 
-**Auth:** user_account+
+**Auth:** site editor+ (หรือ global `admin`)
 
 **Response:** `204 No Content` (ไม่มี body)
 
@@ -857,11 +1080,11 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ---
 
-### PUT /api/v1/admin/social-links/reorder
+### PUT /api/v1/admin/sites/{siteId}/portfolio/social-links/reorder
 
 เรียงลำดับ social links ใหม่
 
-**Auth:** user_account+
+**Auth:** site editor+ (หรือ global `admin`)
 
 **Request Body:**
 ```json
@@ -885,13 +1108,13 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ---
 
-## 11. Contact Messages API
+## 13. Contact Messages API
 
-### GET /api/v1/admin/contacts
+### GET /api/v1/admin/sites/{siteId}/portfolio/contacts
 
-ดูรายการ contact messages ทั้งหมด
+ดูรายการ contact messages ทั้งหมดของไซต์
 
-**Auth:** visitor+
+**Auth:** site viewer+ (หรือ global `admin`)
 
 **Response:** `200 OK`
 ```json
@@ -915,11 +1138,11 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ---
 
-### GET /api/v1/admin/contacts/{id}
+### GET /api/v1/admin/sites/{siteId}/portfolio/contacts/{id}
 
 ดูรายละเอียด contact message
 
-**Auth:** visitor+
+**Auth:** site viewer+ (หรือ global `admin`)
 
 **Side Effect:** ถ้าข้อความยังไม่ได้อ่าน (`is_read: false`) ระบบจะ auto mark เป็น `is_read: true`
 
@@ -931,11 +1154,11 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ---
 
-### DELETE /api/v1/admin/contacts/{id}
+### DELETE /api/v1/admin/sites/{siteId}/portfolio/contacts/{id}
 
 ลบ contact message
 
-**Auth:** user_account+
+**Auth:** site editor+ (หรือ global `admin`)
 
 **Response:** `204 No Content` (ไม่มี body)
 
@@ -945,13 +1168,13 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ---
 
-## 12. File Upload API (user_account+)
+## 14. File Upload API
 
-### POST /api/v1/admin/upload
+### POST /api/v1/admin/sites/{siteId}/portfolio/upload
 
-อัปโหลดไฟล์รูปภาพ
+อัปโหลดไฟล์รูปภาพ (ผูกกับไซต์ที่ระบุ)
 
-**Auth:** user_account+
+**Auth:** site editor+ (หรือ global `admin`)
 
 **Request:**
 - Content-Type: `multipart/form-data`
@@ -982,7 +1205,7 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ---
 
-## 13. Static Files
+## 15. Static Files
 
 ### GET /uploads/{filename}
 
@@ -1003,7 +1226,7 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 | `204` | No Content | ลบข้อมูลสำเร็จ (DELETE), CORS preflight |
 | `400` | Bad Request | Request body ไม่ถูกต้อง, validation ไม่ผ่าน, ID format ผิด, unknown JSON fields |
 | `401` | Unauthorized | ไม่มี token, token ไม่ถูกต้อง/หมดอายุ, format ผิด |
-| `403` | Forbidden | Role ไม่เพียงพอสำหรับ endpoint นี้ |
+| `403` | Forbidden | Global role หรือ site role ไม่เพียงพอ, หรือไม่ใช่สมาชิกไซต์ |
 | `404` | Not Found | ไม่พบ resource ตาม ID |
 | `409` | Conflict | ข้อมูลซ้ำ (เช่น username ซ้ำ) |
 | `500` | Internal Server Error | Server error (logged พร้อม request_id) |
@@ -1026,32 +1249,37 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 
 ## Quick Test ด้วย cURL
 
+แทนที่ `<siteId>` ด้วย ObjectID ของไซต์ (hex 24 ตัว)
+
 ```bash
 # 1. Login
 curl -X POST http://localhost:8080/api/v1/admin/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"changeme123"}'
 
-# 2. ดึง portfolio (public)
-curl http://localhost:8080/api/v1/portfolio
+# 2. Resolve site จาก domain (public)
+curl "http://localhost:8080/api/v1/public/sites/by-domain?host=localhost"
 
-# 3. ดู skills (ต้อง auth)
-curl http://localhost:8080/api/v1/admin/skills \
+# 3. ดึง portfolio (public)
+curl "http://localhost:8080/api/v1/public/sites/<siteId>/portfolio"
+
+# 4. ดู skills (ต้อง auth + สมาชิกไซต์ระดับ viewer+)
+curl "http://localhost:8080/api/v1/admin/sites/<siteId>/portfolio/skills" \
   -H "Authorization: Bearer <token>"
 
-# 4. สร้าง skill ใหม่
-curl -X POST http://localhost:8080/api/v1/admin/skills \
+# 5. สร้าง skill ใหม่ (editor+)
+curl -X POST "http://localhost:8080/api/v1/admin/sites/<siteId>/portfolio/skills" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <token>" \
   -d '{"name":"React","icon":"logos:react","category":"frontend","sort_order":5}'
 
-# 5. อัปโหลดรูป
-curl -X POST http://localhost:8080/api/v1/admin/upload \
+# 6. อัปโหลดรูป (editor+)
+curl -X POST "http://localhost:8080/api/v1/admin/sites/<siteId>/portfolio/upload" \
   -H "Authorization: Bearer <token>" \
   -F "file=@./photo.jpg"
 
-# 6. ส่ง contact message (public)
-curl -X POST http://localhost:8080/api/v1/contact \
+# 7. ส่ง contact message (public)
+curl -X POST "http://localhost:8080/api/v1/public/sites/<siteId>/portfolio/contacts" \
   -H "Content-Type: application/json" \
   -d '{"name":"Jane","email":"jane@example.com","subject":"Hello","message":"Hi there!"}'
 ```

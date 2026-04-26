@@ -23,7 +23,9 @@ func NewContactHandler(repo *repository.ContactRepository, log *slog.Logger) *Co
 }
 
 func (h *ContactHandler) List(w http.ResponseWriter, r *http.Request) {
-	messages, err := h.repo.List(r.Context())
+	siteID := middleware.GetSiteID(r.Context())
+
+	messages, err := h.repo.List(r.Context(), siteID)
 	if err != nil {
 		h.log.Error("listing contact messages",
 			"error", err,
@@ -33,7 +35,7 @@ func (h *ContactHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	unread, err := h.repo.CountUnread(r.Context())
+	unread, err := h.repo.CountUnread(r.Context(), siteID)
 	if err != nil {
 		h.log.Error("counting unread messages",
 			"error", err,
@@ -45,13 +47,15 @@ func (h *ContactHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ContactHandler) GetByID(w http.ResponseWriter, r *http.Request) {
+	siteID := middleware.GetSiteID(r.Context())
+
 	id, err := primitive.ObjectIDFromHex(r.PathValue("id"))
 	if err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid message ID")
 		return
 	}
 
-	msg, err := h.repo.GetByID(r.Context(), id)
+	msg, err := h.repo.GetByID(r.Context(), siteID, id)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			response.Error(w, http.StatusNotFound, "message not found")
@@ -66,7 +70,7 @@ func (h *ContactHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !msg.IsRead {
-		if err := h.repo.MarkAsRead(r.Context(), id); err != nil {
+		if err := h.repo.MarkAsRead(r.Context(), siteID, id); err != nil {
 			h.log.Error("marking message as read",
 				"error", err,
 				"request_id", middleware.GetRequestID(r.Context()),
@@ -79,13 +83,15 @@ func (h *ContactHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ContactHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	siteID := middleware.GetSiteID(r.Context())
+
 	id, err := primitive.ObjectIDFromHex(r.PathValue("id"))
 	if err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid message ID")
 		return
 	}
 
-	if err := h.repo.Delete(r.Context(), id); err != nil {
+	if err := h.repo.Delete(r.Context(), siteID, id); err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			response.Error(w, http.StatusNotFound, "message not found")
 			return

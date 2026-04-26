@@ -95,7 +95,7 @@ mux.HandleFunc("GET /api/v1/admin/users/{id}", handler.GetByID)
 {
   "sub": "user_object_id",
   "usr": "username",
-  "role": "admin|user_account|visitor",
+  "role": "super_admin|admin|editor|viewer",
   "exp": 1234567890,
   "iat": 1234567890
 }
@@ -113,9 +113,14 @@ mux.HandleFunc("GET /api/v1/admin/users/{id}", handler.GetByID)
 
 | Role | Level | สิทธิ์ |
 |------|-------|-------|
-| `admin` | 3 | ทุกอย่าง + จัดการ users |
-| `user_account` | 2 | CRUD content + upload + ลบ contacts |
-| `visitor` | 1 | ดู content + อ่าน contacts |
+| `super_admin` | 4 | ทุกอย่าง ทุก site และสร้าง super_admin อื่นได้ |
+| `admin` | 3 | จัดการ users/content เฉพาะ site ที่ได้รับสิทธิ์ |
+| `editor` | 2 | แก้ content เฉพาะ site ที่ได้รับสิทธิ์ |
+| `viewer` | 1 | ดู Messages/Contacts เฉพาะ site ที่ได้รับสิทธิ์ |
+
+**การอนุญาตสองระดับ (Two-level authorization):**
+- **Global RBAC** — บทบาทระดับบัญชีทั้งระบบใน JWT: `super_admin` / `admin` / `editor` / `viewer`
+- **Site access** — `site_members` ระบุว่า user เข้าถึง site ไหนได้บ้าง
 
 ---
 
@@ -226,9 +231,12 @@ golang.org/x/crypto             v0.28.0   — bcrypt password hashing
 | **Clean Architecture** | ทั้งโปรเจกต์ | แบ่ง layer: Handler → Repository → Database |
 | **Repository Pattern** | `internal/repository/` | แยก data access logic ออกจาก business logic |
 | **Middleware Pattern** | `internal/middleware/` | chain middleware สำหรับ cross-cutting concerns |
+| **Multi-Site / Multi-Tenant** | ทั้งระบบ | แยกข้อมูลต่อไซต์ด้วยฟิลด์ `site_id`; ตรวจสอบสมาชิกไซต์ผ่าน middleware |
 | **Dependency Injection** | `cmd/server/main.go` | inject dependencies ผ่าน constructor functions |
 | **Singleton Pattern** | site_settings, hero, about | collection ที่มี document เดียว ใช้ upsert |
 | **Envelope Pattern** | `pkg/response/` | JSON response ครอบด้วย `{ data, error, meta }` |
+
+**Middleware ที่เกี่ยวกับไซต์:** `RequireSiteMember` — ตรวจสอบว่า user เป็นสมาชิกของ site ที่ request อ้างถึง (และมี site role ไม่ต่ำกว่าที่กำหนด) ก่อนเข้าถึง route ที่มี `siteId` (มักใช้คู่กับ `siteOwner` / `siteEditor` / `siteViewer` ใน router)
 
 ---
 
@@ -236,13 +244,15 @@ golang.org/x/crypto             v0.28.0   — bcrypt password hashing
 
 โปรเจกต์นี้เป็น **Backend API เท่านั้น** ไม่มี frontend รวมอยู่ด้วย
 
-CORS ตั้งค่า:
-- **Go config default:** `http://localhost:3000` (ค่า default ใน `config.go`)
-- **`.env.example` / `docker-compose.yml`:** `http://localhost:3000,http://localhost:3001` (เพิ่ม port 3001)
+CORS ตั้งค่า (`ALLOWED_ORIGINS` — หลาย origin คั่นด้วย comma รองรับหลายโดเมน / multi-site):
+- **ตัวอย่างค่าแนะนำ (multi-domain):** `http://localhost:3000,http://localhost:3001,https://admin.example.com`
+- **Go config default:** `http://localhost:3000` (ถ้าไม่ตั้ง env ใน `config.go`)
+- **`.env.example`:** ใช้ตัวอย่าง multi-domain ด้านบน; **`docker-compose.yml`** อาจกำหนดเฉพาะ local เช่น `http://localhost:3000,http://localhost:3001`
 - `http://localhost:3000` — Portfolio website (public)
-- `http://localhost:3001` — Admin dashboard (SPA)
+- `http://localhost:3001` — Admin dashboard (SPA) local
+- `https://admin.example.com` — ตัวอย่าง admin บน production
 
-**หมายเหตุ:** ถ้าไม่มี `.env` file ระบบจะใช้ค่า default จาก `config.go` คือ `http://localhost:3000` เท่านั้น
+**หมายเหตุ:** ถ้าไม่มี `.env` ระบบจะใช้ค่า default จาก `config.go` คือ `http://localhost:3000` เท่านั้น — สำหรับหลายไซต์หรือ admin คนละโดเมน ให้ตั้ง `ALLOWED_ORIGINS` ให้ครบทุก origin ที่เรียก API
 
 **Tech stack ที่แนะนำสำหรับ frontend:**
 - **Nuxt 3** + **Vue 3** + **TypeScript** + **TailwindCSS**
