@@ -9,7 +9,7 @@
 ระบบนี้เลือก cutover เป็น multi-site เต็มรูปแบบ:
 
 - ใช้ Portfolio admin routes แบบ `/api/v1/admin/sites/{siteId}/portfolio/...` เท่านั้น
-- ไม่เก็บ legacy routes เดิม เช่น `/api/v1/admin/projects`, `/api/v1/admin/skills`, `/api/v1/admin/hero`, `/api/v1/admin/upload`
+- ไม่เก็บ legacy Portfolio admin routes เดิม
 - ข้อมูล portfolio เดิมไม่ต้อง migrate ให้ตั้ง `RESET_DATABASE_ON_START=true` เพื่อ drop database แล้ว seed ใหม่ตอนรัน server
 - ทุก handler/repository ของ portfolio ต้องรับ `siteId` จาก path/middleware และ query ด้วย `site_id` เสมอ
 
@@ -99,9 +99,9 @@
 │     └─→ site_members: unique compound index บน site_id + user_id │
 ├──────────────────────────────────────────────────────────────────┤
 │  7. Seed initial data (ถ้า admin_users collection ว่าง)           │
-│     └─→ สร้าง admin user ด้วย bcrypt hashed password             │
+│     └─→ สร้าง user เริ่มต้นเป็น super_admin ด้วย bcrypt hash     │
 │     └─→ สร้าง default site                                      │
-│     └─→ สร้าง site_member (admin user เป็น owner ของไซต์นั้น)    │
+│     └─→ สร้าง site_members access record ให้ user เริ่มต้น        │
 │     └─→ สร้างข้อมูล portfolio (site_settings, hero, about,       │
 │         skills, projects, experiences, social_links) พร้อม site_id │
 ├──────────────────────────────────────────────────────────────────┤

@@ -13,7 +13,7 @@
 - ตั้ง `RESET_DATABASE_ON_START=true` ตอนรัน server เพื่อ drop database แล้ว seed ใหม่
 - เมื่อ `admin_users` ว่าง ระบบจะ seed admin user, default site, site member และ portfolio documents ใหม่พร้อม `site_id`
 - ห้ามเก็บข้อมูล portfolio ที่ไม่มี `site_id` ปนกับ schema ใหม่
-- ห้ามสร้าง compatibility layer สำหรับ legacy routes เช่น `/api/v1/admin/projects`
+- ห้ามสร้าง compatibility layer สำหรับ legacy Portfolio admin routes
 
 ตัวอย่าง local dev:
 
@@ -411,8 +411,8 @@ portfolio_admin (database)
         ┌─────────────┐  ┌──────────────────┐
         │ site_members│──│      sites       │
         │ site_id +   │  │ slug, type, ...  │
-        │ user_id +   │  └────────┬─────────┘
-        │ site role   │           │
+        │ user_id     │  └────────┬─────────┘
+        │ access list │           │
         └─────────────┘           │ site_id บนเอกสาร portfolio
                                   ▼
         ┌────────────────────────────────────────┐
@@ -441,7 +441,7 @@ portfolio_admin (database)
 
 **หมายเหตุ:**
 - ไม่มี foreign key references ระหว่าง collections (MongoDB ไม่ enforce foreign keys)
-- `admin_users` เชื่อมกับ `sites` ผ่าน `site_members` (`user_id` + `site_id` + `role` ระดับ site); JWT ยังคงระบุตัวตนผู้ใช้สำหรับ auth
+- `admin_users` เชื่อมกับ `sites` ผ่าน `site_members` (`user_id` + `site_id`) ในฐานะ access list; JWT ระบุ global role สำหรับ auth/RBAC
 - เอกสาร portfolio ทุกประเภทอ้างอิง `site_id` ไปยัง `sites`
 - Singleton collections (site_settings, hero, about) มีได้ 1 document ต่อ `site_id` — ใช้ Upsert pattern ภายใต้ขอบเขต site
 
@@ -453,9 +453,9 @@ portfolio_admin (database)
 
 | Collection | จำนวน Documents | คำอธิบาย |
 |-----------|----------------|---------|
-| `admin_users` | 1 | Admin user (username/password จาก env vars) |
+| `admin_users` | 1 | Super admin user (username/password จาก env vars) |
 | `sites` | 1 | Default site หนึ่งรายการ |
-| `site_members` | 1 | ผู้ใช้ admin คนแรกเป็น `owner` ของ default site |
+| `site_members` | 1 | access record ให้ผู้ใช้ seed เข้าถึง default site |
 | `site_settings` | 1 | Default site settings (title, theme, meta) — มี `site_id` |
 | `hero` | 1 | Default hero content — มี `site_id` |
 | `about` | 1 | Default about content พร้อม stats 4 รายการ — มี `site_id` |

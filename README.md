@@ -1,200 +1,98 @@
 # Portfolio Admin API
 
-Backend API สำหรับจัดการเนื้อหาเว็บ Portfolio ผ่าน Admin Panel (CMS)
+Go REST API สำหรับระบบจัดการหลายเว็บไซต์ โดยใช้ MongoDB เก็บข้อมูลแบบ multi-site และแยกข้อมูล portfolio ด้วย `site_id`
 
 ## Tech Stack
 
 | Technology | Purpose |
-|-----------|---------|
-| Go 1.22+ | API Server (net/http with Go 1.22 ServeMux) |
+|------------|---------|
+| Go 1.22+ | API server ด้วย `net/http` ServeMux |
 | MongoDB 7 | Database |
 | JWT | Authentication |
-| Docker | Containerization |
+| Docker | Local/dev deployment |
+
+## Architecture
+
+- Public Portfolio resolve site จาก domain ด้วย `GET /api/v1/public/sites/by-domain?host=:host`
+- Public Portfolio ดึงข้อมูลด้วย `GET /api/v1/public/sites/{siteId}/portfolio`
+- Admin Dashboard ใช้ site-scoped routes เช่น `/api/v1/admin/sites/{siteId}/portfolio/projects`
+- `sites.domains` ใช้สำหรับ map domain/subdomain ไปยัง site
+- `site_members` เป็น access list (`user_id` + `site_id`)
+- Global role ใน JWT เป็นตัวตัดสินสิทธิ์: `super_admin`, `admin`, `editor`, `viewer`
 
 ## Quick Start
 
-### ด้วย Docker Compose (แนะนำ)
+```bash
+cp .env.example .env
+docker compose up --build -d
+```
+
+หรือรัน local:
 
 ```bash
-# สร้าง .env จาก .env.example
-cp .env.example .env
-
-# แก้ไข JWT_SECRET และ ADMIN_PASSWORD ใน .env
-
-# รัน
-docker compose up -d
+go mod tidy
+go run ./cmd/server
 ```
 
 API จะพร้อมใช้งานที่ `http://localhost:8080`
 
-### ด้วย Go (Development)
+## Important Environment Variables
 
-ต้องการ Go 1.22+ และ MongoDB ที่รันอยู่
+| Variable | Description |
+|----------|-------------|
+| `PORT` | API port |
+| `MONGO_URI` | MongoDB connection string |
+| `MONGO_DB` | Database name |
+| `JWT_SECRET` | Secret สำหรับ sign JWT |
+| `ADMIN_USERNAME` | Username ของ user seed เริ่มต้น |
+| `ADMIN_PASSWORD` | Password ของ user seed เริ่มต้น |
+| `ALLOWED_ORIGINS` | Static origins เช่น Admin Dashboard; portfolio domains โหลดจาก `sites.domains` |
+| `RESET_DATABASE_ON_START` | ถ้า `true` จะ drop database แล้ว seed ใหม่ตอน start |
 
-```bash
-# ติดตั้ง dependencies
-go mod tidy
+## Seed Data
 
-# รัน
-go run ./cmd/server
-```
+เมื่อ database ว่าง ระบบจะ seed:
 
-## API Endpoints
+- user เริ่มต้นเป็น `super_admin`
+- default portfolio site พร้อม domain `localhost:3000`
+- access record ใน `site_members`
+- default portfolio content ที่มี `site_id` ครบ
 
-### Public (ไม่ต้อง auth)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/v1/portfolio` | ดึงข้อมูล portfolio ทั้งหมด |
-| POST | `/api/v1/contact` | ส่งข้อความจาก contact form |
-
-### Auth
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/v1/admin/auth/login` | เข้าสู่ระบบ (ได้ JWT token) |
-
-### Admin — Site Settings (ต้อง auth)
+## Public API
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/admin/site-settings` | ดึง site settings |
-| PUT | `/api/v1/admin/site-settings` | อัพเดท site settings |
+| GET | `/api/v1/public/sites/by-domain?host=:host` | resolve site จาก host |
+| GET | `/api/v1/public/sites/{siteId}/portfolio` | ดึง portfolio data ของ site |
+| POST | `/api/v1/public/sites/{siteId}/portfolio/contacts` | ส่ง contact message |
+| GET | `/uploads/{filename}` | ดูไฟล์ upload |
 
-### Admin — Hero (ต้อง auth)
+## Admin API
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/v1/admin/hero` | ดึง hero data |
-| PUT | `/api/v1/admin/hero` | อัพเดท hero data |
+| Area | Path Pattern |
+|------|--------------|
+| Auth | `/api/v1/admin/auth/...` |
+| Users | `/api/v1/admin/users...` |
+| User site access | `/api/v1/admin/users/{id}/memberships` |
+| Sites | `/api/v1/admin/sites...` |
+| Portfolio content | `/api/v1/admin/sites/{siteId}/portfolio/...` |
 
-### Admin — About (ต้อง auth)
+Legacy portfolio admin routes เดิมไม่รองรับแล้ว ต้องใช้ site-scoped routes เท่านั้น
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/v1/admin/about` | ดึง about data |
-| PUT | `/api/v1/admin/about` | อัพเดท about data |
+## Roles
 
-### Admin — Skills CRUD (ต้อง auth)
+| Role | สิทธิ์ |
+|------|--------|
+| `super_admin` | เห็นทุก site, จัดการ sites/users ทุกคน, สร้าง `super_admin` ได้ |
+| `admin` | จัดการ users/content เฉพาะ site ที่ได้รับ access |
+| `editor` | แก้ content เฉพาะ site ที่ได้รับ access |
+| `viewer` | อ่าน Dashboard/Contacts เฉพาะ site ที่ได้รับ access |
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/v1/admin/skills` | ดึง skills ทั้งหมด |
-| POST | `/api/v1/admin/skills` | เพิ่ม skill |
-| PUT | `/api/v1/admin/skills/{id}` | แก้ไข skill |
-| DELETE | `/api/v1/admin/skills/{id}` | ลบ skill |
+## Docs
 
-### Admin — Projects CRUD (ต้อง auth)
+รายละเอียดเต็มอยู่ใน `GUIDE/`:
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/v1/admin/projects` | ดึง projects ทั้งหมด |
-| POST | `/api/v1/admin/projects` | เพิ่ม project |
-| PUT | `/api/v1/admin/projects/{id}` | แก้ไข project |
-| DELETE | `/api/v1/admin/projects/{id}` | ลบ project |
-| PUT | `/api/v1/admin/projects/reorder` | จัดลำดับ projects |
-
-### Admin — Experiences CRUD (ต้อง auth)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/v1/admin/experiences` | ดึง experiences ทั้งหมด |
-| POST | `/api/v1/admin/experiences` | เพิ่ม experience |
-| PUT | `/api/v1/admin/experiences/{id}` | แก้ไข experience |
-| DELETE | `/api/v1/admin/experiences/{id}` | ลบ experience |
-| PUT | `/api/v1/admin/experiences/reorder` | จัดลำดับ experiences |
-
-### Admin — Social Links CRUD (ต้อง auth)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/v1/admin/social-links` | ดึง social links ทั้งหมด |
-| POST | `/api/v1/admin/social-links` | เพิ่ม social link |
-| PUT | `/api/v1/admin/social-links/{id}` | แก้ไข social link |
-| DELETE | `/api/v1/admin/social-links/{id}` | ลบ social link |
-
-### Admin — Contact Messages (ต้อง auth)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/v1/admin/contacts` | ดึงข้อความทั้งหมด |
-| GET | `/api/v1/admin/contacts/{id}` | ดูข้อความ (auto mark read) |
-| DELETE | `/api/v1/admin/contacts/{id}` | ลบข้อความ |
-
-### Admin — File Upload (ต้อง auth)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/v1/admin/upload` | อัพโหลดรูปภาพ |
-| GET | `/uploads/{filename}` | ดูรูปที่อัพโหลด (public) |
-
-## Authentication
-
-1. Login เพื่อรับ token:
-
-```bash
-curl -X POST http://localhost:8080/api/v1/admin/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"changeme123"}'
-```
-
-2. ใช้ token ใน Header:
-
-```
-Authorization: Bearer <token>
-```
-
-## Response Format
-
-ทุก response ใช้ JSON envelope format:
-
-```json
-{
-  "data": { ... },
-  "error": "error message (ถ้ามี)",
-  "meta": { ... }
-}
-```
-
-## Project Structure
-
-```
-├── cmd/server/          # Entry point
-├── internal/
-│   ├── config/          # Environment configuration
-│   ├── database/        # MongoDB connection + seed data
-│   ├── handler/         # HTTP handlers (request/response)
-│   ├── middleware/       # HTTP middleware stack
-│   ├── model/           # Domain models
-│   ├── repository/      # Data access layer (MongoDB)
-│   └── router/          # Route registration
-├── pkg/response/        # JSON response helpers
-├── uploads/             # Uploaded files directory
-├── Dockerfile           # Multi-stage Docker build
-├── docker-compose.yml   # Docker Compose with MongoDB
-└── .env.example         # Environment variables template
-```
-
-## Seeding
-
-เมื่อรัน API ครั้งแรก ระบบจะ seed ข้อมูลเริ่มต้นอัตโนมัติ:
-- Admin user (จาก env vars `ADMIN_USERNAME` / `ADMIN_PASSWORD`)
-- Site settings, Hero, About data
-- Skills 14 รายการ
-- Projects 2 รายการ
-- Experiences 2 รายการ
-- Social links 4 รายการ
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `8080` | Server port |
-| `MONGO_URI` | `mongodb://localhost:27017` | MongoDB connection URI |
-| `MONGO_DB` | `portfolio_admin` | Database name |
-| `JWT_SECRET` | `change-me-in-production` | JWT signing secret |
-| `ADMIN_USERNAME` | `admin` | Initial admin username |
-| `ADMIN_PASSWORD` | `changeme123` | Initial admin password |
-| `UPLOAD_DIR` | `./uploads` | Upload directory |
-| `MAX_UPLOAD_SIZE_MB` | `10` | Max upload file size (MB) |
-| `ALLOWED_ORIGINS` | `http://localhost:3000` | CORS allowed origins (comma-separated) |
+- `01-SYSTEM-FLOW.md`
+- `04-API-REFERENCE.md`
+- `05-DATABASE-SCHEMA.md`
+- `06-SETUP-AND-DEPLOYMENT.md`

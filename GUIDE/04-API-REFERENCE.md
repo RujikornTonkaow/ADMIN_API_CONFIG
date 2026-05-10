@@ -14,16 +14,7 @@
 /api/v1/admin/sites/{siteId}/portfolio/...
 ```
 
-ไม่ต้องเก็บ legacy routes เดิม เช่น:
-
-```text
-/api/v1/admin/projects
-/api/v1/admin/skills
-/api/v1/admin/hero
-/api/v1/admin/upload
-```
-
-ถ้ามี legacy routes เหลือใน router/handler/test ให้ลบออกหรือแก้ให้ test ใช้ route ใหม่ทั้งหมด เพื่อบังคับให้ Admin Dashboard ส่ง `siteId` เสมอ
+ไม่ต้องเก็บ legacy Portfolio admin routes เดิม ถ้ามีเหลือใน router/handler/test ให้ลบออกหรือแก้ให้ test ใช้ route ใหม่ทั้งหมด เพื่อบังคับให้ Admin Dashboard ส่ง `siteId` เสมอ
 
 ข้อมูล portfolio เดิมใน MongoDB ให้ถือว่าไม่ต้อง migrate: ให้ตั้ง `RESET_DATABASE_ON_START=true` ตอนรัน server เพื่อ drop database แล้ว seed ใหม่ สร้าง `sites`, `site_members` และ portfolio documents ที่มี `site_id` ครบ
 
@@ -476,9 +467,9 @@ Token ได้จาก `POST /api/v1/admin/auth/login` มีอายุ 24 �
 ```
 GET    /api/v1/admin/sites              — ลิสต์ไซต์ที่ user เห็นได้ (viewer+)
 POST   /api/v1/admin/sites              — สร้างไซต์ใหม่ (super_admin เท่านั้น)
-GET    /api/v1/admin/sites/{siteId}     — ดูรายละเอียดไซต์ (site viewer+)
-PUT    /api/v1/admin/sites/{siteId}     — แก้ไขไซต์ (site owner)
-DELETE /api/v1/admin/sites/{siteId}     — ลบไซต์ (site owner)
+GET    /api/v1/admin/sites/{siteId}     — ดูรายละเอียดไซต์ (มี site access; super_admin bypass)
+PUT    /api/v1/admin/sites/{siteId}     — แก้ไขไซต์ (admin+ พร้อม site access; super_admin bypass)
+DELETE /api/v1/admin/sites/{siteId}     — ลบไซต์ (admin+ พร้อม site access; super_admin bypass)
 ```
 
 ### GET /api/v1/admin/sites
@@ -493,7 +484,7 @@ DELETE /api/v1/admin/sites/{siteId}     — ลบไซต์ (site owner)
 
 ### POST /api/v1/admin/sites
 
-สร้างไซต์ใหม่ ผู้สร้างจะถูกเพิ่มเป็น `owner` ใน `site_members` อัตโนมัติ
+สร้างไซต์ใหม่ ผู้สร้างจะถูกเพิ่มใน `site_members` เป็น access record อัตโนมัติ และถ้าเป็น `portfolio` จะ seed default portfolio content ให้ทันที
 
 **Auth:** super_admin
 
@@ -521,11 +512,11 @@ DELETE /api/v1/admin/sites/{siteId}     — ลบไซต์ (site owner)
 
 ดูรายละเอียดไซต์
 
-**Auth:** site viewer+ (สมาชิกไซต์ role ≥ `viewer`; หรือ global `admin`)
+**Auth:** มี site access; `super_admin` bypass
 
 **Errors:**
 - `400` — `siteId` ไม่ใช่ ObjectID ที่ถูกต้อง
-- `403` — ไม่ใช่สมาชิกไซต์ (ยกเว้น `admin`)
+- `403` — ไม่มี site access หรือ global role ไม่พอ
 - `404` — ไม่พบไซต์
 
 ---
@@ -534,7 +525,7 @@ DELETE /api/v1/admin/sites/{siteId}     — ลบไซต์ (site owner)
 
 แก้ไขข้อมูลไซต์
 
-**Auth:** site owner (หรือ global `admin`)
+**Auth:** `admin+` พร้อม site access; `super_admin` bypass
 
 **Request Body:**
 ```json
@@ -556,7 +547,7 @@ DELETE /api/v1/admin/sites/{siteId}     — ลบไซต์ (site owner)
 
 ลบไซต์
 
-**Auth:** site owner (หรือ global `admin`)
+**Auth:** `admin+` พร้อม site access; `super_admin` bypass
 
 **Response:** `204 No Content`
 
@@ -568,17 +559,17 @@ DELETE /api/v1/admin/sites/{siteId}     — ลบไซต์ (site owner)
 ## 5. Site Members API
 
 ```
-GET    /api/v1/admin/sites/{siteId}/members                    — ลิสต์สมาชิก (site viewer+)
-POST   /api/v1/admin/sites/{siteId}/members                    — เพิ่มสมาชิก (site owner)
-PUT    /api/v1/admin/sites/{siteId}/members/{memberId}       — เปลี่ยน role (site owner)
-DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสมาชิก (site owner)
+GET    /api/v1/admin/sites/{siteId}/members                    — ลิสต์สมาชิก (`admin+` พร้อม site access)
+POST   /api/v1/admin/sites/{siteId}/members                    — เพิ่มสมาชิก (`admin+` พร้อม site access)
+PUT    /api/v1/admin/sites/{siteId}/members/{memberId}       — เปลี่ยน storage role (`admin+` พร้อม site access)
+DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสมาชิก (`admin+` พร้อม site access)
 ```
 
 ### GET /api/v1/admin/sites/{siteId}/members
 
 ลิสต์สมาชิกทั้งหมดของไซต์
 
-**Auth:** site viewer+ (หรือ global `admin`)
+**Auth:** `admin+` พร้อม site access; `super_admin` bypass
 
 **Response:** `200 OK`
 
@@ -588,17 +579,16 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 เพิ่มสมาชิกให้ไซต์
 
-**Auth:** site owner (หรือ global `admin`)
+**Auth:** `admin+` พร้อม site access; `super_admin` bypass
 
 **Request Body:**
 ```json
 {
-  "user_id": "6789abcdef0123456789abcd",
-  "role": "editor"
+  "user_id": "6789abcdef0123456789abcd"
 }
 ```
 
-- `role` — `owner` | `editor` | `viewer`
+ระบบจะสร้าง record ด้วย storage role `viewer` เป็นค่าเริ่มต้น; UI หลักควรใช้ `/api/v1/admin/users/{id}/memberships` เพื่อจัดการ site access
 
 **Response:** `201 Created`
 
@@ -610,9 +600,9 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 ### PUT /api/v1/admin/sites/{siteId}/members/{memberId}
 
-เปลี่ยน role ของสมาชิก
+เปลี่ยน storage role ของสมาชิก
 
-**Auth:** site owner (หรือ global `admin`)
+**Auth:** `admin+` พร้อม site access; `super_admin` bypass
 
 **Request Body:**
 ```json
@@ -629,7 +619,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 ลบสมาชิกออกจากไซต์
 
-**Auth:** site owner (หรือ global `admin`)
+**Auth:** `admin+` พร้อม site access; `super_admin` bypass
 
 **Response:** `204 No Content`
 
@@ -641,7 +631,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 ดู site settings ของไซต์ที่ระบุ
 
-**Auth:** site viewer+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 **Response:** `200 OK`
 ```json
@@ -665,7 +655,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 แก้ไข site settings
 
-**Auth:** site editor+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 **Request Body:**
 ```json
@@ -692,7 +682,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 ดูข้อมูล hero section
 
-**Auth:** site viewer+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 ---
 
@@ -700,7 +690,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 แก้ไข hero section
 
-**Auth:** site editor+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 **Request Body:**
 ```json
@@ -726,7 +716,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 ดูข้อมูล about section
 
-**Auth:** site viewer+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 ---
 
@@ -734,7 +724,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 แก้ไข about section
 
-**Auth:** site editor+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 **Request Body:**
 ```json
@@ -763,7 +753,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 ดูรายการ skills ทั้งหมด (เรียงตาม sort_order)
 
-**Auth:** site viewer+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 ---
 
@@ -771,7 +761,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 สร้าง skill ใหม่
 
-**Auth:** site editor+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 **Request Body:**
 ```json
@@ -797,7 +787,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 แก้ไข skill
 
-**Auth:** site editor+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 **Validation:**
 - `name`, `icon`, `category` ต้องไม่ว่าง
@@ -813,7 +803,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 ลบ skill
 
-**Auth:** site editor+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 **Response:** `204 No Content` (ไม่มี body)
 
@@ -828,7 +818,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 ดูรายการ projects ทั้งหมด (เรียงตาม sort_order)
 
-**Auth:** site viewer+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 ---
 
@@ -836,7 +826,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 สร้าง project ใหม่
 
-**Auth:** site editor+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 **Request Body:**
 ```json
@@ -863,7 +853,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 แก้ไข project
 
-**Auth:** site editor+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 **Validation:**
 - `title` และ `description` ต้องไม่ว่าง
@@ -879,7 +869,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 ลบ project
 
-**Auth:** site editor+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 **Response:** `204 No Content` (ไม่มี body)
 
@@ -892,7 +882,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 เรียงลำดับ projects ใหม่
 
-**Auth:** site editor+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 **Request Body:**
 ```json
@@ -928,7 +918,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 ดูรายการ experiences ทั้งหมด (เรียงตาม sort_order)
 
-**Auth:** site viewer+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 ---
 
@@ -936,7 +926,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 สร้าง experience ใหม่
 
-**Auth:** site editor+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 **Request Body:**
 ```json
@@ -965,7 +955,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 แก้ไข experience
 
-**Auth:** site editor+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 **Validation:**
 - `role`, `company`, `period` ต้องไม่ว่าง
@@ -981,7 +971,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 ลบ experience
 
-**Auth:** site editor+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 **Response:** `204 No Content` (ไม่มี body)
 
@@ -994,7 +984,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 เรียงลำดับ experiences ใหม่
 
-**Auth:** site editor+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 **Request Body:**
 ```json
@@ -1024,7 +1014,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 ดูรายการ social links ทั้งหมด (เรียงตาม sort_order)
 
-**Auth:** site viewer+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 ---
 
@@ -1032,7 +1022,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 สร้าง social link ใหม่
 
-**Auth:** site editor+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 **Request Body:**
 ```json
@@ -1055,7 +1045,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 แก้ไข social link
 
-**Auth:** site editor+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 **Validation:**
 - `name`, `url`, `icon` ต้องไม่ว่าง
@@ -1071,7 +1061,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 ลบ social link
 
-**Auth:** site editor+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 **Response:** `204 No Content` (ไม่มี body)
 
@@ -1084,7 +1074,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 เรียงลำดับ social links ใหม่
 
-**Auth:** site editor+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 **Request Body:**
 ```json
@@ -1114,7 +1104,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 ดูรายการ contact messages ทั้งหมดของไซต์
 
-**Auth:** site viewer+ (หรือ global `admin`)
+**Auth:** `viewer+` พร้อม site access; `super_admin` bypass
 
 **Response:** `200 OK`
 ```json
@@ -1142,7 +1132,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 ดูรายละเอียด contact message
 
-**Auth:** site viewer+ (หรือ global `admin`)
+**Auth:** `viewer+` พร้อม site access; `super_admin` bypass
 
 **Side Effect:** ถ้าข้อความยังไม่ได้อ่าน (`is_read: false`) ระบบจะ auto mark เป็น `is_read: true`
 
@@ -1158,7 +1148,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 ลบ contact message
 
-**Auth:** site editor+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 **Response:** `204 No Content` (ไม่มี body)
 
@@ -1174,7 +1164,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 
 อัปโหลดไฟล์รูปภาพ (ผูกกับไซต์ที่ระบุ)
 
-**Auth:** site editor+ (หรือ global `admin`)
+**Auth:** `editor+` พร้อม site access; `super_admin` bypass
 
 **Request:**
 - Content-Type: `multipart/form-data`
@@ -1226,7 +1216,7 @@ DELETE /api/v1/admin/sites/{siteId}/members/{memberId}        — ลบสม�
 | `204` | No Content | ลบข้อมูลสำเร็จ (DELETE), CORS preflight |
 | `400` | Bad Request | Request body ไม่ถูกต้อง, validation ไม่ผ่าน, ID format ผิด, unknown JSON fields |
 | `401` | Unauthorized | ไม่มี token, token ไม่ถูกต้อง/หมดอายุ, format ผิด |
-| `403` | Forbidden | Global role หรือ site role ไม่เพียงพอ, หรือไม่ใช่สมาชิกไซต์ |
+| `403` | Forbidden | Global role ไม่เพียงพอ หรือไม่มี site access |
 | `404` | Not Found | ไม่พบ resource ตาม ID |
 | `409` | Conflict | ข้อมูลซ้ำ (เช่น username ซ้ำ) |
 | `500` | Internal Server Error | Server error (logged พร้อม request_id) |

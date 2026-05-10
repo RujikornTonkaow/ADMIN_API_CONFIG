@@ -129,7 +129,7 @@ portfolio-admin-api/
 | `AdminPassword` | `ADMIN_PASSWORD` | `changeme123` | Password สำหรับ seed admin |
 | `UploadDir` | `UPLOAD_DIR` | `./uploads` | Directory สำหรับเก็บไฟล์อัปโหลด |
 | `MaxUploadSizeMB` | `MAX_UPLOAD_SIZE_MB` | `10` | ขนาดไฟล์สูงสุดที่อัปโหลดได้ (MB) |
-| `AllowedOrigins` | `ALLOWED_ORIGINS` | `http://localhost:3000` | CORS allowed origins (คั่นด้วย comma) |
+| `AllowedOrigins` | `ALLOWED_ORIGINS` | `http://localhost:3000` | CORS static origins (คั่นด้วย comma); portfolio domains โหลดจาก `sites.domains` ผ่าน `DomainCache` |
 
 ---
 
@@ -147,8 +147,9 @@ portfolio-admin-api/
 **หน้าที่:** สร้างข้อมูลเริ่มต้นเมื่อ database ว่าง (first run)
 
 **สิ่งที่ seed:**
-- `admin_users` — สร้าง admin user (bcrypt hashed password, role: admin)
-- `site_settings` — ค่า default ของ site (title, theme, meta description)
+- `admin_users` — สร้าง user เริ่มต้น (bcrypt hashed password, role: `super_admin`)
+- `sites` และ `site_members` — default portfolio site และ access record เริ่มต้น
+- `site_settings` — ค่า default ของ site (title, theme, meta description) พร้อม `site_id`
 - `hero` — ข้อมูล hero section (greeting, name, subtitle, CTA buttons)
 - `about` — bio paragraphs, personality tags, stats
 - `skills` — 14 skills ตัวอย่าง (Vue.js, Go, Docker ฯลฯ) แบ่งตาม category
@@ -172,9 +173,9 @@ portfolio-admin-api/
 |------|-----------|---------|
 | `public.go` | `GET /public/sites/{siteId}/portfolio`, `POST /public/sites/{siteId}/portfolio/contacts`, `GET /public/sites/by-domain` | API สาธารณะ: ดึงข้อมูล portfolio ตาม site + ส่ง contact message + ค้นหา site จาก domain |
 | `auth.go` | `POST /login`, `GET /me` | Login ด้วย username/password → JWT token, ดูข้อมูล user ปัจจุบัน |
-| `user.go` | CRUD `/admin/users` | จัดการ admin users (สร้าง, ดู, แก้ไข, ลบ, เปลี่ยนรหัสผ่าน) — admin only |
-| `site.go` | CRUD `/admin/sites` | จัดการ sites (สร้าง, ดู, แก้ไข, ลบ) |
-| `site_member.go` | CRUD `/admin/sites/{siteId}/members` | จัดการสมาชิกของ site (เพิ่ม, ดู, แก้ role, ลบ) |
+| `user.go` | CRUD `/admin/users` + `/admin/users/{id}/memberships` | จัดการ users และ site access — `admin+` โดย handler scope ตาม site |
+| `site.go` | CRUD `/admin/sites` | จัดการ sites; `GET` คืน site ตามสิทธิ์, `POST` ใช้ `super_admin`, portfolio site ใหม่จะ seed default content |
+| `site_member.go` | CRUD `/admin/sites/{siteId}/members` | จัดการ access record ของ site; role ภายใน record เป็น legacy/storage compatibility ไม่ใช่ per-site role ใน UI |
 | `site_settings.go` | GET/PUT `/admin/sites/{siteId}/portfolio/site-settings` | ดู/แก้ไข site settings (site title, theme, meta) |
 | `hero.go` | GET/PUT `/admin/sites/{siteId}/portfolio/hero` | ดู/แก้ไข hero section (greeting, name, CTA) |
 | `about.go` | GET/PUT `/admin/sites/{siteId}/portfolio/about` | ดู/แก้ไข about section (bio, tags, stats) |
@@ -200,7 +201,7 @@ portfolio-admin-api/
 | `CORS()` | ตรวจสอบ Origin, set Access-Control headers, handle preflight OPTIONS |
 | `Auth()` | ตรวจสอบ JWT token จาก Authorization header, inject user info ลง context |
 | `RequireRole()` | ตรวจสอบ role level ของ user ว่าเพียงพอสำหรับ endpoint นั้น |
-| `RequireSiteMember()` | ตรวจสอบสิทธิ์ระดับ site (owner >= editor >= viewer) + inject `siteID` ลง context |
+| `RequireSiteMember()` | ตรวจว่า user มี access record ของ site นั้น หรือเป็น `super_admin` ที่ bypass ได้ แล้ว inject `siteID` ลง context |
 
 **Helper functions:**
 - `GetRequestID(ctx)` — ดึง request ID จาก context
@@ -217,7 +218,7 @@ portfolio-admin-api/
 
 **Multi-site Models:**
 - `Site` — ข้อมูล site (เช่น slug, domain, metadata)
-- `SiteMember` — ความสัมพันธ์ user กับ site และ role ระดับ site
+- `SiteMember` — ความสัมพันธ์ user กับ site ในฐานะ access list
 
 **Singleton Models (เอกสารเดียวต่อ collection ต่อ site):**
 - `SiteSettings` — ชื่อไซต์, page title, meta description, theme, profile image
@@ -311,7 +312,7 @@ portfolio-admin-api/
 **`Dockerfile`:**
 - **Build stage:** ใช้ `golang:1.22-alpine`, compile เป็น static binary (`CGO_ENABLED=0`)
 - **Runtime stage:** ใช้ `alpine:3.19`, สร้าง non-root user (`appuser`), expose port 8080
-- **Healthcheck:** `wget` ไปที่ `/api/v1/portfolio` ทุก 30 วินาที
+- **Healthcheck:** ควรใช้ endpoint ที่สอดคล้องกับ multi-site เช่น `/api/v1/public/sites/by-domain?host=localhost%3A3000`
 
 **`docker-compose.yml`:**
 - **api service:** build จาก Dockerfile, port 8080, environment variables, uploads volume

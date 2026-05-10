@@ -60,19 +60,19 @@ ADMIN_PASSWORD=your-secure-password
 UPLOAD_DIR=./uploads
 MAX_UPLOAD_SIZE_MB=10
 
-# CORS — ใส่ origin ของ frontend (หลายโดเมน คั่นด้วย comma — รองรับหลายไซต์ / admin แยกโดเมน)
-ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001,https://admin.example.com
+# CORS — ใส่ origin แบบ static เช่น admin dashboard; portfolio domains โหลดจาก sites.domains
+ALLOWED_ORIGINS=http://localhost:3001,https://admin.example.com
 ```
 
-**ข้อมูล Seed เริ่มต้น:** ครั้งแรกที่ DB ว่าง ระบบจะ seed ให้อัตโนมัติ — สร้างผู้ใช้ admin, site เริ่มต้น (ชื่อ `My Portfolio`, slug `default`, type `portfolio`, domains `["localhost:3000"]`), แถว `site_member` (admin เป็น owner ของ site นี้) และข้อมูล portfolio ทั้งชุดที่ผูก `site_id` กับ site เริ่มต้น
+**ข้อมูล Seed เริ่มต้น:** ครั้งแรกที่ DB ว่าง ระบบจะ seed ให้อัตโนมัติ — สร้างผู้ใช้จาก env เป็น role `super_admin`, site เริ่มต้น (ชื่อ `My Portfolio`, slug `default`, type `portfolio`, domains `["localhost:3000"]`), แถว `site_members` สำหรับ access list และข้อมูล portfolio ทั้งชุดที่ผูก `site_id` กับ site เริ่มต้น
 
-**เส้นทาง API แบบ multi-site (เทียบของเดิม):**
+**เส้นทาง API แบบ multi-site:**
 
-| เดิม | ใหม่ |
-|------|------|
-| `GET /api/v1/portfolio` | `GET /api/v1/public/sites/{siteId}/portfolio` |
-| `GET/POST /api/v1/admin/skills` ฯลฯ | `.../api/v1/admin/sites/{siteId}/portfolio/skills` |
-| ส่วนอื่นของ portfolio (hero, about, projects, experiences, social-links, contacts, upload, site-settings) | อยู่ภายใต้ `/api/v1/admin/sites/{siteId}/portfolio/...` ตามชื่อ resource |
+| ส่วน | Route |
+|------|-------|
+| Resolve domain | `GET /api/v1/public/sites/by-domain?host=:host` |
+| Public portfolio | `GET /api/v1/public/sites/{siteId}/portfolio` |
+| Portfolio admin CRUD | `/api/v1/admin/sites/{siteId}/portfolio/...` |
 | Submit contact สาธารณะ | `POST /api/v1/public/sites/{siteId}/portfolio/contacts` |
 
 ### Step 3: รัน Docker Compose
@@ -156,11 +156,11 @@ docker run -d \
 cp .env.example .env
 ```
 
-แก้ไข `MONGO_URI` ให้ชี้ไป localhost (และตั้ง CORS ให้ครบทุก origin ที่ใช้ — รองรับหลายโดเมนสำหรับ multi-site):
+แก้ไข `MONGO_URI` ให้ชี้ไป localhost และตั้ง CORS สำหรับ origin แบบ static:
 
 ```env
 MONGO_URI=mongodb://localhost:27017
-ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001,https://admin.example.com
+ALLOWED_ORIGINS=http://localhost:3001,https://admin.example.com
 ```
 
 ### Step 5: รัน Server
@@ -206,13 +206,13 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/server-linux ./cmd/server
 | `ADMIN_PASSWORD` | No | `changeme123` | Password ของ admin ที่ seed ตอนเริ่มต้น |
 | `UPLOAD_DIR` | No | `./uploads` | Directory สำหรับเก็บไฟล์ที่อัปโหลด |
 | `MAX_UPLOAD_SIZE_MB` | No | `10` | ขนาดไฟล์สูงสุดที่อัปโหลดได้ (MB) |
-| `ALLOWED_ORIGINS` | No | `http://localhost:3000` | CORS allowed origins หลายค่าได้ (คั่นด้วย `,`) — ใช้เมื่อมีหลายโดเมน (public site / admin ฯลฯ) |
+| `ALLOWED_ORIGINS` | No | `http://localhost:3000` | CORS static origins หลายค่าได้ (คั่นด้วย `,`) เช่น admin dashboard; portfolio domains ที่สร้างเป็น site จะโหลดจาก `sites.domains` ผ่าน `DomainCache` |
 
 ### สิ่งที่ต้องเปลี่ยนใน Production
 
 1. **`JWT_SECRET`** — ต้องเปลี่ยนเป็น random string ยาว ๆ (เช่น 64+ characters)
 2. **`ADMIN_PASSWORD`** — ต้องเปลี่ยนเป็นรหัสผ่านที่ปลอดภัย
-3. **`ALLOWED_ORIGINS`** — ต้องใส่ domain จริงของทุก frontend ที่เรียก API (หลายค่าคั่นด้วย comma) เพื่อรองรับหลายไซต์
+3. **`ALLOWED_ORIGINS`** — ต้องใส่ origin แบบ static เช่น Admin Dashboard production/local; portfolio domains ที่อยู่ใน `sites.domains` ไม่จำเป็นต้องเพิ่มซ้ำใน env
 4. **`MONGO_URI`** — ใช้ connection string จริงพร้อม authentication
 
 ---
@@ -312,7 +312,7 @@ db.dropDatabase()
 
 ## Healthcheck
 
-Public portfolio เดิมที่ `/api/v1/portfolio` ถูกย้ายเป็นแบบ multi-site แล้ว — ตรวจสุขภาพควรใช้ endpoint ที่ไม่ต้องรู้ `siteId` ล่วงหน้า เช่น resolve โดเมน (หลัง seed จะมี `localhost:3000`):
+ตรวจสุขภาพควรใช้ endpoint ที่ไม่ต้องรู้ `siteId` ล่วงหน้า เช่น resolve โดเมน (หลัง seed จะมี `localhost:3000`):
 
 ```bash
 # ตรวจสอบว่า API + DB + seed ทำงานสอดคล้องกัน (ควรได้ 200 และ JSON ของ site)
@@ -322,7 +322,7 @@ curl "http://localhost:8080/api/v1/public/sites/by-domain?host=localhost%3A3000"
 # curl "http://localhost:8080/api/v1/public/sites/{siteId}/portfolio"
 ```
 
-**หมายเหตุ:** ถ้า `Dockerfile` ยังอ้าง `HEALTHCHECK` ไปที่ `/api/v1/portfolio` ควรอัปเดตเป็น URL ที่เหมาะสม (เช่น `by-domain` ด้านบน) ให้สอดคล้องกับสถาปัตยกรรมใหม่
+**หมายเหตุ:** Healthcheck ควรใช้ URL ที่สอดคล้องกับสถาปัตยกรรม multi-site เช่น `by-domain` ด้านบน
 
 Docker Compose จะ:
 - ตรวจสอบ API ทุก 30 วินาที
@@ -372,10 +372,10 @@ docker compose restart api
 
 **แก้ไข:**
 ```bash
-# เพิ่ม origin ใน .env (หลายโดเมนสำหรับหลายไซต์ / แอดมิน)
-ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001,https://admin.example.com,https://your-public-site.com
+# เพิ่ม admin/static origin ใน .env
+ALLOWED_ORIGINS=http://localhost:3001,https://admin.example.com
 
-# Restart API
+# ถ้าเป็น portfolio domain ให้เพิ่ม host ใน Site Management (sites.domains) แล้วรอ DomainCache refresh หรือ restart API
 docker compose restart api
 ```
 
@@ -428,7 +428,7 @@ docker volume ls | grep portfolio
 
 - [ ] เปลี่ยน `JWT_SECRET` เป็น random string ที่แข็งแกร่ง (64+ characters)
 - [ ] เปลี่ยน `ADMIN_PASSWORD` เป็นรหัสผ่านที่ปลอดภัย
-- [ ] ตั้งค่า `ALLOWED_ORIGINS` ให้ครบทุก domain จริงที่เรียก API (คั่นด้วย comma)
+- [ ] ตั้งค่า `ALLOWED_ORIGINS` สำหรับ Admin/static origins และเพิ่ม Portfolio domains ผ่าน `Site Management`
 - [ ] ใช้ MongoDB ที่มี authentication (`MONGO_URI` พร้อม username/password)
 - [ ] ตั้งค่า HTTPS (TLS) ผ่าน reverse proxy (nginx/traefik)
 - [ ] ตั้งค่า persistent storage สำหรับ uploads volume

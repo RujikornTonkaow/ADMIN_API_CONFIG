@@ -41,8 +41,8 @@
 ### Go 1.22 ServeMux Features ที่ใช้
 ```go
 // Method-based routing (ไม่ต้องเช็ค r.Method เอง)
-mux.HandleFunc("GET /api/v1/portfolio", handler.GetPortfolio)
-mux.HandleFunc("POST /api/v1/contact", handler.SubmitContact)
+mux.HandleFunc("GET /api/v1/public/sites/by-domain", handler.ResolveDomain)
+mux.HandleFunc("GET /api/v1/public/sites/{siteId}/portfolio", handler.GetPortfolio)
 
 // Path parameters
 mux.HandleFunc("GET /api/v1/admin/users/{id}", handler.GetByID)
@@ -155,7 +155,7 @@ mux.HandleFunc("GET /api/v1/admin/users/{id}", handler.GetByID)
   "level": "INFO",
   "msg": "request",
   "method": "GET",
-  "path": "/api/v1/portfolio",
+  "path": "/api/v1/public/sites/{siteId}/portfolio",
   "status": 200,
   "duration_ms": 12,
   "request_id": "a1b2c3d4-e5f6-..."
@@ -236,7 +236,7 @@ golang.org/x/crypto             v0.28.0   — bcrypt password hashing
 | **Singleton Pattern** | site_settings, hero, about | collection ที่มี document เดียว ใช้ upsert |
 | **Envelope Pattern** | `pkg/response/` | JSON response ครอบด้วย `{ data, error, meta }` |
 
-**Middleware ที่เกี่ยวกับไซต์:** `RequireSiteMember` — ตรวจสอบว่า user เป็นสมาชิกของ site ที่ request อ้างถึง (และมี site role ไม่ต่ำกว่าที่กำหนด) ก่อนเข้าถึง route ที่มี `siteId` (มักใช้คู่กับ `siteOwner` / `siteEditor` / `siteViewer` ใน router)
+**Middleware ที่เกี่ยวกับไซต์:** `RequireSiteMember` — ตรวจสอบว่า user มี access record ใน `site_members` สำหรับ site ที่ request อ้างถึง โดย `super_admin` bypass ได้ ส่วนความสามารถอ่าน/เขียนตัดสินจาก global role (`admin`, `editor`, `viewer`)
 
 ---
 
@@ -244,15 +244,14 @@ golang.org/x/crypto             v0.28.0   — bcrypt password hashing
 
 โปรเจกต์นี้เป็น **Backend API เท่านั้น** ไม่มี frontend รวมอยู่ด้วย
 
-CORS ตั้งค่า (`ALLOWED_ORIGINS` — หลาย origin คั่นด้วย comma รองรับหลายโดเมน / multi-site):
-- **ตัวอย่างค่าแนะนำ (multi-domain):** `http://localhost:3000,http://localhost:3001,https://admin.example.com`
+CORS ตั้งค่า (`ALLOWED_ORIGINS` — static origins หลายค่า คั่นด้วย comma):
+- **ตัวอย่างค่าแนะนำ:** `http://localhost:3001,https://admin.example.com`
 - **Go config default:** `http://localhost:3000` (ถ้าไม่ตั้ง env ใน `config.go`)
-- **`.env.example`:** ใช้ตัวอย่าง multi-domain ด้านบน; **`docker-compose.yml`** อาจกำหนดเฉพาะ local เช่น `http://localhost:3000,http://localhost:3001`
-- `http://localhost:3000` — Portfolio website (public)
+- **Portfolio domains:** ไม่ต้องเพิ่มทุกโดเมนใน env ถ้าเป็น site ในระบบ เพราะ `DomainCache` โหลดจาก `sites.domains`
 - `http://localhost:3001` — Admin dashboard (SPA) local
 - `https://admin.example.com` — ตัวอย่าง admin บน production
 
-**หมายเหตุ:** ถ้าไม่มี `.env` ระบบจะใช้ค่า default จาก `config.go` คือ `http://localhost:3000` เท่านั้น — สำหรับหลายไซต์หรือ admin คนละโดเมน ให้ตั้ง `ALLOWED_ORIGINS` ให้ครบทุก origin ที่เรียก API
+**หมายเหตุ:** ถ้าไม่มี `.env` ระบบจะใช้ค่า default จาก `config.go` คือ `http://localhost:3000` เท่านั้น — production ควรตั้ง `ALLOWED_ORIGINS` ให้ครอบคลุม admin/static origins และจัดการ portfolio domains ผ่าน `Site Management`
 
 **Tech stack ที่แนะนำสำหรับ frontend:**
 - **Nuxt 3** + **Vue 3** + **TypeScript** + **TailwindCSS**
